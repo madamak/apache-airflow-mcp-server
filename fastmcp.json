@@ -1,0 +1,12 @@
+{
+  "$schema": "https://gofastmcp.com/schemas/fastmcp_config/v1.json",
+  "entrypoint": {
+    "file": "src/airflow_mcp/server.py",
+    "object": "mcp"
+  },
+  "deployment": {
+    "transport": "http",
+    "host": "127.0.0.1",
+    "port": 8765
+  }
+}

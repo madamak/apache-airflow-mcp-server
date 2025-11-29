@@ -1,0 +1,96 @@
+[project]
+name = "apache-airflow-mcp-server"
+dynamic = ["version"]
+description = "Production-grade MCP server for Apache Airflow - Enable AI agents to inspect DAGs, runs, logs, and perform operations"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    { name = "Adam Makhlouf", email = "adam@makora.io" }
+]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "airflow",
+    "apache-airflow",
+    "ai",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "apache-airflow-client>=2.7.0,<3.0.0",
+    "fastmcp>=2.13.0.2",
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.3,<3.0",
+    "pyyaml>=6.0,<7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/madamak/apache-airflow-mcp-server"
+Repository = "https://github.com/madamak/apache-airflow-mcp-server"
+Issues = "https://github.com/madamak/apache-airflow-mcp-server/issues"
+
+[project.scripts]
+airflow-mcp = "airflow_mcp:main"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "bandit[toml]>=1.7.9",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4"]
+ignore = ["E501", "N818"]  # E501: line length, N818: match Airflow's ApiException naming
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+fallback_version = "0.0.0"
+local_scheme = "no-local-version"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-k 'not manual'"
+markers = [
+  "unit: fast, isolated tests",
+  "integration: tests requiring external services or IO",
+  "functional: end-to-end style tests",
+  "manual: excluded by default",
+]
+pythonpath = ["src"]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/airflow_mcp"]

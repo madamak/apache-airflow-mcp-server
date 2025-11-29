@@ -1,0 +1,41 @@
+# Example Airflow instance configuration
+# Copy this file and customize for your environment
+
+# Data team staging instance
+data-stg:
+  host: https://airflow.data-stg.example.com/
+  api_version: v1
+  verify_ssl: true
+  auth:
+    type: basic
+    username: ${AIRFLOW_INSTANCE_DATA_STG_USERNAME}
+    password: ${AIRFLOW_INSTANCE_DATA_STG_PASSWORD}
+
+# ML team staging instance
+ml-stg:
+  host: https://airflow.ml-stg.example.com/
+  api_version: v1
+  verify_ssl: true
+  auth:
+    type: basic
+    username: ${AIRFLOW_INSTANCE_ML_STG_USERNAME}
+    password: ${AIRFLOW_INSTANCE_ML_STG_PASSWORD}
+
+# Local development (Airflow standalone) — never reuse these defaults in shared environments
+local:
+  host: http://localhost:8080/
+  api_version: v1
+  verify_ssl: false
+  auth:
+    type: basic
+    username: admin
+    password: admin
+
+# Bearer token auth example (experimental)
+# ml-prod:
+#   host: https://airflow.ml-prod.example.com/
+#   api_version: v1
+#   verify_ssl: true
+#   auth:
+#     type: bearer
+#     token: ${AIRFLOW_INSTANCE_ML_PROD_TOKEN}

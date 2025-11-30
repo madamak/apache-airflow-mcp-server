@@ -239,7 +239,17 @@ def list_task_instances(
         task_instances: list[dict[str, Any]] = []
         for ti in getattr(resp, "task_instances", []) or []:
             task_id_value = getattr(ti, "task_id", None)
-            state_value = getattr(ti, "state", None)
+            # Airflow client may represent state as a string, enum, or model object.
+            # Always coerce to a string for comparison and JSON output.
+            raw_state_value = getattr(ti, "state", None)
+            if isinstance(raw_state_value, str):
+                state_value = raw_state_value
+            elif raw_state_value is None:
+                state_value = None
+            else:
+                # Fallback: TaskState enum / model – rely on its string representation.
+                state_value = str(raw_state_value)
+
             if state_filter_set and (state_value or "").lower() not in state_filter_set:
                 continue
             if task_id_filter_set and task_id_value not in task_id_filter_set:

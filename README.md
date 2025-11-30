@@ -1,6 +1,9 @@
 # Airflow MCP Server
 
 [![MCP](https://img.shields.io/badge/MCP-Server-blueviolet)](https://modelcontextprotocol.io)
+[![PyPI](https://img.shields.io/pypi/v/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
+[![Python](https://img.shields.io/pypi/pyversions/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
+[![Airflow](https://img.shields.io/badge/Airflow-2.5--2.11-017CEE?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/)
 [![CI](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -9,7 +12,21 @@ Human entrypoint for running and using the Apache Airflow MCP server. This serve
 
 ## Quickstart
 
-### 1) Configure instances (required)
+### 1) Install the server (PyPI)
+
+Install with `uv` so you are exercising the exact bits that ship to users and get reproducible virtualenvs:
+
+```bash
+uv tool install apache-airflow-mcp-server
+```
+
+No `uv`? Fall back to pip:
+
+```bash
+pip install apache-airflow-mcp-server
+```
+
+### 2) Configure instances (required)
 
 Set `AIRFLOW_MCP_INSTANCES_FILE` to a YAML file listing available Airflow instances. Values may reference environment variables using `${VAR}` syntax. Missing variables cause startup errors.
 
@@ -60,7 +77,7 @@ Environment variables:
 - `AIRFLOW_MCP_LOG_FILE` (optional)
 - `AIRFLOW_MCP_HTTP_BLOCK_GET_ON_MCP` (default: true)
 
-### 2) Run the server
+### 3) Run the server
 
 - HTTP (recommended for tooling):
 
@@ -86,7 +103,7 @@ Tip: A `fastmcp.json` is included for discovery/config by FastMCP tooling:
 }
 ```
 
-### 3) Typical incident workflow
+### 4) Typical incident workflow
 
 Start from an Airflow UI URL (often in a Datadog alert):
 1. `airflow_resolve_url(url)` → resolve `instance`, `dag_id`, `dag_run_id`, `task_id`.

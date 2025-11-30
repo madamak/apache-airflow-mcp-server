@@ -188,6 +188,14 @@ git branch -m main
 - `docs/DESIGN_TIERED_CONFIGURATION.md` (useful for contributors)
 - `docs/RELEASE_PLAN.md` (can delete after release, or keep for history)
 
+### Automated PyPI publishing
+- GitHub releases now trigger `.github/workflows/publish.yml`, which installs deps, runs `uv run pytest` and `uv run ruff check .`, builds the wheel via `uv build`, and uses trusted publishing to push to PyPI as `apache-airflow-mcp-server`.
+- Action items before cutting a release tag:
+  1. Ensure `main` is green in CI (same test + lint suite).
+  2. Update `pyproject.toml` version (via tag, since hatch-vcs derives it) and add release notes.
+  3. Create a GitHub release (`vX.Y.Z`). When it flips to `published`, the workflow promotes the artifact automatically—no manual `twine upload`.
+- Releases created from commits that skipped CI will be blocked by the workflow because tests run again during publication—do **not** bypass them.
+
 ---
 
 ## Phase 3: HuggingFace Space (Gradio demo + landing page)

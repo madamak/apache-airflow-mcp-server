@@ -1,365 +1,323 @@
-# Airflow MCP Server
+# Apache Airflow MCP Server
 
 [![MCP](https://img.shields.io/badge/MCP-Server-blueviolet)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
 [![Python](https://img.shields.io/pypi/pyversions/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
-[![Airflow](https://img.shields.io/badge/Airflow-2.5--2.11-017CEE?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/)
+[![Airflow](https://img.shields.io/badge/Airflow-2.5%E2%80%932.11%20%7C%203.x-017CEE?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/)
 [![CI](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-Human entrypoint for running and using the Apache Airflow MCP server. This server exposes safe, focused tools to inspect Airflow DAGs, runs, and logs (with optional write operations gated by client approval). Responses are structured JSON objects (dicts) and include a `request_id` for traceability.
+Connect Claude, Cursor, and any [MCP](https://modelcontextprotocol.io) client to your Apache Airflow deployments — and let AI agents debug failed DAGs for you.
+
+Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this fail?"* — the agent resolves the URL, finds the failed tasks, pulls the error lines from the logs (server-side filtered so it doesn't blow the context window), and can re-trigger or clear runs **only with your approval**.
+
+## Highlights
+
+- 🔍 **Incident-response first** — resolve Airflow UI URLs straight to the failing task, filter logs by error level with context lines, follow `try_number` semantics correctly (sensors included)
+- 🏢 **Multi-instance** — one server for dev/staging/prod across teams, with per-instance credentials and an SSRF guard that rejects unknown hosts
+- 🔒 **Safe by default** — read-only mode (`AIRFLOW_MCP_READ_ONLY=true`), write tools annotated as destructive so clients prompt for confirmation, secrets never logged or echoed
+- 📉 **Token-efficient** — log tailing, level filtering, byte caps, and truncation metadata designed for LLM context windows
+- 🧭 **Airflow 2 and 3** — Airflow 2.5–2.11 (API v1) fully supported; Airflow 3 (API v2) supported experimentally, including JWT auth
+- 📎 **Traceable** — every response carries a `request_id` that matches the structured server logs
 
 ## Quickstart
 
-### 1) Install the server (PyPI)
-
-Install with `uv` so you are exercising the exact bits that ship to users and get reproducible virtualenvs:
+### 1. Install
 
 ```bash
-uv tool install apache-airflow-mcp-server
+uv tool install apache-airflow-mcp-server   # or: pip install apache-airflow-mcp-server
 ```
 
-No `uv`? Fall back to pip:
+> **Airflow 3?** Also run `uv tool install apache-airflow-mcp-server --with 'apache-airflow-client>=3,<4'` — see [Airflow compatibility](#airflow-compatibility).
+
+### 2. Connect your MCP client
+
+The fastest path is a single instance configured entirely with environment variables — no config file needed.
+
+<details open>
+<summary><b>Claude Code</b></summary>
 
 ```bash
-pip install apache-airflow-mcp-server
+claude mcp add airflow \
+  --env AIRFLOW_MCP_HOST=https://airflow.example.com \
+  --env AIRFLOW_MCP_USERNAME=admin \
+  --env AIRFLOW_MCP_PASSWORD=your-password \
+  -- uvx --from apache-airflow-mcp-server airflow-mcp --transport stdio
+```
+</details>
+
+<details>
+<summary><b>Claude Desktop</b></summary>
+
+Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "airflow": {
+      "command": "uvx",
+      "args": ["--from", "apache-airflow-mcp-server", "airflow-mcp", "--transport", "stdio"],
+      "env": {
+        "AIRFLOW_MCP_HOST": "https://airflow.example.com",
+        "AIRFLOW_MCP_USERNAME": "admin",
+        "AIRFLOW_MCP_PASSWORD": "your-password"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "airflow": {
+      "command": "uvx",
+      "args": ["--from", "apache-airflow-mcp-server", "airflow-mcp", "--transport", "stdio"],
+      "env": {
+        "AIRFLOW_MCP_HOST": "https://airflow.example.com",
+        "AIRFLOW_MCP_USERNAME": "admin",
+        "AIRFLOW_MCP_PASSWORD": "your-password"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>VS Code (Copilot)</b></summary>
+
+Add to `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "airflow": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "apache-airflow-mcp-server", "airflow-mcp", "--transport", "stdio"],
+      "env": {
+        "AIRFLOW_MCP_HOST": "https://airflow.example.com",
+        "AIRFLOW_MCP_USERNAME": "admin",
+        "AIRFLOW_MCP_PASSWORD": "your-password"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Any client, over HTTP</b></summary>
+
+Run the server yourself and point the client at the endpoint:
+
+```bash
+AIRFLOW_MCP_HOST=https://airflow.example.com \
+AIRFLOW_MCP_USERNAME=admin AIRFLOW_MCP_PASSWORD=your-password \
+airflow-mcp --transport http --host 127.0.0.1 --port 8765
 ```
 
-### 2) Configure instances (required)
+```json
+{ "mcpServers": { "airflow": { "url": "http://127.0.0.1:8765/mcp" } } }
+```
 
-Set `AIRFLOW_MCP_INSTANCES_FILE` to a YAML file listing available Airflow instances. Values may reference environment variables using `${VAR}` syntax. Missing variables cause startup errors.
+Health check: `GET /health` → `200 OK`.
+</details>
 
-Example (`examples/instances.yaml`):
+### 3. Ask your agent something
+
+> *"Why did the latest run of `etl_pipeline` fail?"*
+>
+> *"https://airflow.example.com/dags/etl_pipeline/grid — what happened here, and is it safe to clear?"*
+>
+> *"Pause every DAG owned by data-eng on staging."*
+
+## Airflow compatibility
+
+The server talks to Airflow through the official `apache-airflow-client`. Install the client major that matches your Airflow:
+
+| Your Airflow | REST API | Install | Status |
+|---|---|---|---|
+| 2.5 – 2.11 | v1 | `pip install 'apache-airflow-client<3'` (default) | ✅ Stable |
+| 3.x | v2 | `pip install 'apache-airflow-client>=3,<4'` and set `api_version: v2` | 🧪 Experimental |
+
+For Airflow 3, set `AIRFLOW_MCP_API_VERSION=v2` (or `api_version: v2` per instance in the registry YAML). Notes:
+
+- **Auth**: bearer tokens are passed through as JWTs; basic credentials are automatically exchanged for a JWT via `POST /auth/token` and refreshed periodically (`AIRFLOW_MCP_TOKEN_REFRESH_SECONDS`, default 3600).
+- `execution_date` ordering maps to `logical_date`, datasets map to assets, and UI links use the Airflow 3 route scheme — tool inputs/outputs stay the same.
+- `include_subdags`/`include_parentdag` clear options don't exist in Airflow 3 and are ignored.
+
+Both client majors are exercised in CI on every commit. Bug reports from real Airflow 3 deployments are very welcome!
+
+## Configuration
+
+### Single instance (env vars only)
+
+| Variable | Required | Description |
+|---|---|---|
+| `AIRFLOW_MCP_HOST` | ✅ | Airflow base URL, e.g. `https://airflow.example.com` |
+| `AIRFLOW_MCP_USERNAME` / `AIRFLOW_MCP_PASSWORD` | ✅* | Basic auth credentials |
+| `AIRFLOW_MCP_TOKEN` | ✅* | Bearer/JWT token (used instead of basic auth) |
+| `AIRFLOW_MCP_API_VERSION` | | `v1` (Airflow 2, default) or `v2` (Airflow 3) |
+| `AIRFLOW_MCP_VERIFY_SSL` | | Verify TLS certificates (default `true`) |
+
+\* provide either username+password or a token.
+
+### Multiple instances (registry YAML)
+
+Point `AIRFLOW_MCP_INSTANCES_FILE` at a YAML registry (it takes precedence over the single-instance env vars). Values may reference environment variables with `${VAR}`:
 
 ```yaml
-# Data team staging instance
 data-stg:
   host: https://airflow.data-stg.example.com/
-  api_version: v1
+  api_version: v1        # Airflow 2
   verify_ssl: true
   auth:
     type: basic
-    username: ${AIRFLOW_INSTANCE_DATA_STG_USERNAME}
-    password: ${AIRFLOW_INSTANCE_DATA_STG_PASSWORD}
+    username: ${AIRFLOW_DATA_STG_USERNAME}
+    password: ${AIRFLOW_DATA_STG_PASSWORD}
 
-# ML team staging instance
-ml-stg:
-  host: https://airflow.ml-stg.example.com/
-  api_version: v1
-  verify_ssl: true
+ml-prod:
+  host: https://airflow.ml-prod.example.com/
+  api_version: v2        # Airflow 3
   auth:
-    type: basic
-    username: ${AIRFLOW_INSTANCE_ML_STG_USERNAME}
-    password: ${AIRFLOW_INSTANCE_ML_STG_PASSWORD}
-
-# Bearer token (experimental)
-# ml-prod:
-#   host: https://airflow.ml-prod.example.com/
-#   api_version: v1
-#   verify_ssl: true
-#   auth:
-#     type: bearer
-#     token: ${AIRFLOW_INSTANCE_ML_PROD_TOKEN}
+    type: bearer
+    token: ${AIRFLOW_ML_PROD_TOKEN}
 ```
 
-Bearer token auth is **experimental**; basic auth remains the primary, well-tested path.
+Tools accept an `instance` key (`data-stg`) or an Airflow UI URL — the server resolves the URL's host against the registry and rejects anything unknown (SSRF guard).
 
-**Kubernetes deployment tip:** Provide `instances.yaml` via a Secret and mount it at `/config/instances.yaml` (set `AIRFLOW_MCP_INSTANCES_FILE=/config/instances.yaml`).
+**Kubernetes tip:** mount the registry from a Secret at `/config/instances.yaml` and set `AIRFLOW_MCP_INSTANCES_FILE=/config/instances.yaml`.
 
-Environment variables:
+### Server options
 
-- `AIRFLOW_MCP_INSTANCES_FILE` (required): path to registry YAML
-- `AIRFLOW_MCP_DEFAULT_INSTANCE` (optional): default instance key
-- `AIRFLOW_MCP_HTTP_HOST` (default: 127.0.0.1)
-- `AIRFLOW_MCP_HTTP_PORT` (default: 8765)
-- `AIRFLOW_MCP_TIMEOUT_SECONDS` (default: 30)
-- `AIRFLOW_MCP_LOG_FILE` (optional)
-- `AIRFLOW_MCP_HTTP_BLOCK_GET_ON_MCP` (default: true)
+| Variable | Default | Description |
+|---|---|---|
+| `AIRFLOW_MCP_DEFAULT_INSTANCE` | | Default instance key (also names the env-var instance) |
+| `AIRFLOW_MCP_READ_ONLY` | `false` | Don't register write tools at all |
+| `AIRFLOW_MCP_HTTP_HOST` / `AIRFLOW_MCP_HTTP_PORT` | `127.0.0.1` / `8765` | HTTP transport bind |
+| `AIRFLOW_MCP_TIMEOUT_SECONDS` | `30` | Airflow API timeout |
+| `AIRFLOW_MCP_TOKEN_REFRESH_SECONDS` | `3600` | Airflow 3: JWT refresh interval for basic-auth instances |
+| `AIRFLOW_MCP_LOG_FILE` | | Optional log file path |
+| `AIRFLOW_MCP_ENABLE_EXTENDED_CLEAR_PARAMS` | `false` | Enable `include_*` clear params (Airflow ≥2.6) |
 
-### 3) Run the server
+### Read-only mode
 
-- HTTP (recommended for tooling):
+Pointing an AI agent at production? Set `AIRFLOW_MCP_READ_ONLY=true` and the write tools (trigger, clear, pause/unpause) are never registered — the agent can inspect everything but change nothing. Even with writes enabled, write tools carry MCP `destructiveHint` annotations so well-behaved clients ask for confirmation first.
 
-```bash
-uv run airflow-mcp --transport http --host 127.0.0.1 --port 8765
-```
+## Tools
 
-- STDIO (CLI/terminal workflows):
+**Discovery & URL utilities**
 
-```bash
-uv run airflow-mcp --transport stdio
-```
+| Tool | Description |
+|---|---|
+| `airflow_list_instances` | List configured instance keys and the default |
+| `airflow_describe_instance` | Host, API version, auth type (secrets redacted) |
+| `airflow_resolve_url` | Parse an Airflow UI URL into instance + dag/run/task identifiers |
 
-Health check (HTTP): `GET /health` → `200 OK`.
+**Read**
 
-Tip: A `fastmcp.json` is included for discovery/config by FastMCP tooling:
+| Tool | Description |
+|---|---|
+| `airflow_list_dags` | DAGs with pause state and UI links |
+| `airflow_get_dag` | DAG details |
+| `airflow_list_dag_runs` | Runs with state filters and ordering (latest first by default) |
+| `airflow_get_dag_run` | Single run details |
+| `airflow_list_task_instances` | Task attempts for a run; filter by `state` / `task_ids` server-side |
+| `airflow_get_task_instance` | Task metadata, retries, timings, optional rendered template fields |
+| `airflow_get_task_instance_logs` | Logs with level filtering, tailing, context lines, and byte caps |
+| `airflow_dataset_events` | Dataset (Airflow 2) / asset (Airflow 3) events |
 
-```json
-{
-  "$schema": "https://gofastmcp.com/schemas/fastmcp_config/v1.json",
-  "entrypoint": { "file": "src/airflow_mcp/server.py", "object": "mcp" },
-  "deployment": { "transport": "http", "host": "127.0.0.1", "port": 8765 }
-}
-```
+**Write** (require client approval; hidden entirely in read-only mode)
 
-### 4) Typical incident workflow
+| Tool | Description |
+|---|---|
+| `airflow_trigger_dag` | Trigger a run with optional conf/logical date/note |
+| `airflow_clear_task_instances` | Clear task instances across runs (supports `dry_run`) |
+| `airflow_clear_dag_run` | Clear a whole run (supports `dry_run`) |
+| `airflow_pause_dag` / `airflow_unpause_dag` | Toggle DAG scheduling |
 
-Start from an Airflow UI URL (often in a Datadog alert):
-1. `airflow_resolve_url(url)` → resolve `instance`, `dag_id`, `dag_run_id`, `task_id`.
-2. `airflow_list_dag_runs(instance|ui_url, dag_id)` → confirm recent state.
-3. `airflow_get_task_instance(instance|ui_url, dag_id, dag_run_id, task_id, include_rendered?, max_rendered_bytes?)` → inspect task metadata, attempts, and optional rendered fields.
-4. `airflow_get_task_instance_logs(instance|ui_url, dag_id, dag_run_id, task_id, try_number, filter_level?, context_lines?, tail_lines?, max_bytes?)` → inspect failure with optional filtering and truncation.
+Every success payload includes a `request_id` for log correlation; failures raise a structured `ToolError` with `{code, message, request_id, context}`.
 
-All tools accept either `instance` or `ui_url`. If both are given and disagree, the call fails with `INSTANCE_MISMATCH`. `ui_url` must be a fully qualified http(s) Airflow URL; use `airflow_list_instances()` to discover valid hosts when you only have an instance key.
+## The incident workflow
 
-## Tool Reference (Structured JSON)
-
-Discovery and URL utilities:
-- `airflow_list_instances()` → list configured instance keys and default
-- `airflow_describe_instance(instance)` → host, api_version, verify_ssl, `auth_type` (redacted)
-- `airflow_resolve_url(url)` → resolve instance and identifiers from an Airflow UI URL
-
-Read-only tools:
-- `airflow_list_dags(instance|ui_url, limit?, offset?, state?/filters)` → compact DAGs with UI links
-- `airflow_get_dag(instance|ui_url, dag_id)` → DAG details + UI link
-- `airflow_list_dag_runs(instance|ui_url, dag_id, state?, limit?, offset?, order_by?, descending?)` → runs + per-run UI links. Defaults to `execution_date` descending ("latest first"). Accepts explicit ordering by `start_date`, `end_date`, or `execution_date`
-- `airflow_get_dag_run(instance|ui_url, dag_id, dag_run_id)` → run details + UI link
-- `airflow_list_task_instances(instance|ui_url, dag_id, dag_run_id, limit?, offset?, state?, task_ids?)` → task attempts for a run, with per-attempt log URLs, optional server-side filtering by state or task id, and a `filters` echo describing applied filters (`count` reflects filtered results; `total_entries` mirrors the API response when available)
-- `airflow_get_task_instance(instance|ui_url, dag_id, dag_run_id, task_id, include_rendered?, max_rendered_bytes?)` → concise task metadata (state, timings, attempts, config) with optional rendered template fields and direct UI links; sensors increment `try_number` on every reschedule, so treat it as an attempt index (derived `retries_*` fields are heuristic)
-- `airflow_get_task_instance_logs(instance|ui_url, dag_id, dag_run_id, task_id, try_number, filter_level?, context_lines?, tail_lines?, max_bytes?)` → log text with optional filtering; response includes `truncated`, `auto_tailed`, and stats
-- `airflow_dataset_events(instance|ui_url, dataset_uri, limit?)` → dataset events (optional capability)
-
-Write tools (require client approval; destructive):
-- `airflow_trigger_dag(instance|ui_url, dag_id, conf?, logical_date?, dag_run_id?, note?)`
-- `airflow_clear_task_instances(instance|ui_url, dag_id, task_ids?, start_date?, end_date?, include_*?, dry_run?)`
-- `airflow_clear_dag_run(instance|ui_url, dag_id, dag_run_id, include_*?, dry_run?, reset_dag_runs?)`
-- `airflow_pause_dag(instance|ui_url, dag_id)` / `airflow_unpause_dag(instance|ui_url, dag_id)`
-
-Contract:
-- Success: dict payloads include a `request_id` (traceable in logs). FastMCP serializes them automatically.
-- Failure: tools raise an MCP `ToolError` whose payload remains a compact JSON string
-  `{ "code": "INVALID_INPUT", "message": "...", "request_id": "...", "context"?: {...} }`.
-
-### Log Filtering (`airflow_get_task_instance_logs`)
-
-Efficient incident triage with server-side filtering and normalized payloads:
-
-**Typical incident workflow:**
-```python
-# Example: Find errors in recent execution with context
-airflow_get_task_instance_logs(
-    dag_id="etl_pipeline",
-    dag_run_id="scheduled__2025-10-30",
-    task_id="transform_data",
-    try_number=2,
-    tail_lines=500,       # Last 500 lines only
-    filter_level="error", # Show ERROR, CRITICAL, FATAL, Exception, Traceback
-    context_lines=5       # Include 5 lines before/after each error
-)
-```
-
-**Two-call pattern (required for `try_number`):**
-1. `ti = airflow_get_task_instance(...)` → read `ti["attempts"]["try_number"]`.
-2. `airflow_get_task_instance_logs(..., try_number=ti["attempts"]["try_number"])`.
-
-Sensors and reschedules can increment `try_number` without consuming retries; keeping this explicit prevents the server from making incorrect assumptions about the “latest attempt.”
-
-Sensors treat each reschedule as another attempt, so `try_number` is best interpreted as an **attempt index** rather than “number of retries consumed.” The derived `retries_consumed` / `retries_remaining` fields are heuristics based on configured retries and may not match Airflow’s notion for long-running sensors—always inspect the task metadata if you need authoritative counts.
-
-**Parameters:**
-- `filter_level`: `"error"` (strict) | `"warning"` (includes errors) | `"info"` (all levels)
-- `context_lines`: Symmetric context (N before + N after each match), clamped to [0, 1000]
-- `tail_lines`: Extract last N lines before filtering, clamped to [0, 100K]
-- `max_bytes`: Hard cap (default: 100KB ≈ 25K tokens)
-- Numeric inputs provided as floats/strings are coerced and clamped server-side so clients can pass user-entered values safely.
-
-**Response shape:**
-- `log`: Single normalized string. When the Airflow API returns host-segmented logs, headers of the form `--- [worker-1] ---` (or `--- [unknown-host] ---`) are inserted with blank lines between segments so LLMs can reason about execution locality.
-- `truncated`: `true` if output exceeded `max_bytes`
-- `auto_tailed`: `true` if log >100MB triggered automatic tail to last 10K lines
-- `match_count`: Number of lines matching `filter_level` (before context expansion)
-- `meta.filters`: Echo of effective filters applied (shows clamped values)
-- `bytes_returned`, `original_lines`, `returned_lines`: stats that align with the normalized text seen by the client
-### Failed Task Discovery (`airflow_list_task_instances`)
-
-`airflow_list_task_instances` now exposes server-side filters that make the dedicated
-`airflow_get_failed_task_instance` helper unnecessary. Use the same primitive for every
-failed-task workflow:
+This is the flow the tools were designed around — going from an alert link to a diagnosis in four calls:
 
 ```python
-# All failed tasks for a known run (count reflects filtered results)
-failed = airflow_list_task_instances(
-    dag_id="etl_pipeline",
-    dag_run_id="scheduled__2025-10-30",
-    state=["failed"]
-)
+# 1. Alert contains an Airflow UI link → resolve it
+airflow_resolve_url("https://airflow.example.com/dags/etl_pipeline/grid?dag_run_id=...")
+#    → {instance, dag_id, dag_run_id, ...}
 
-# Failed tasks for a subset of task IDs (case: only sensors + downloaders)
-subset = airflow_list_task_instances(
-    dag_id="etl_pipeline",
-    dag_run_id="backfill__2025-10-30",
-    state=["failed"],
-    task_ids=["check_source", "download_payload"]
-)
+# 2. Which tasks failed in this run?
+airflow_list_task_instances(dag_id="etl_pipeline", dag_run_id="scheduled__2026-01-01",
+                            state=["failed"])
 
-# Recipe: latest failed run → failed tasks
-latest_failed = airflow_list_dag_runs(
-    dag_id="etl_pipeline",
-    state=["failed"],
-    limit=1
-)["dag_runs"][0]
-failed_tasks = airflow_list_task_instances(
-    dag_id="etl_pipeline",
-    dag_run_id=latest_failed["dag_run_id"],
-    state=["failed"]
-)
+# 3. Get attempt metadata (authoritative try_number, retries, timings)
+ti = airflow_get_task_instance(dag_id="etl_pipeline",
+                               dag_run_id="scheduled__2026-01-01",
+                               task_id="transform_data")
+
+# 4. Pull only the error lines, with context, capped for the LLM
+airflow_get_task_instance_logs(dag_id="etl_pipeline",
+                               dag_run_id="scheduled__2026-01-01",
+                               task_id="transform_data",
+                               try_number=ti["attempts"]["try_number"],
+                               tail_lines=500, filter_level="error", context_lines=5)
 ```
 
-**Why the change?**
-- A single tool stays composable: filter by `state`, `task_ids`, or both.
-- The response includes `filters` (echo) and `total_entries` when the API shares it, so callers can detect whether additional pagination is needed while still getting a filtered `count`.
-- Agents that previously relied on `airflow_get_failed_task_instance` should migrate to `airflow_list_task_instances(state=["failed"])` (optionally preceded by `airflow_list_dag_runs` to resolve the relevant run).
+Log responses include `truncated`, `auto_tailed` (logs >100MB tail automatically), `match_count`, and byte/line stats so the agent knows exactly what it's looking at. Host-segmented logs are flattened with `--- [worker-1] ---` headers; Airflow 3 structured logs are rendered as plain lines.
 
-### Task Instance Metadata (`airflow_get_task_instance`)
+> **Note on `try_number`:** sensors increment it on every reschedule, so treat it as an attempt index. Always read it from `airflow_get_task_instance` rather than guessing — the derived `retries_consumed`/`retries_remaining` fields are heuristics.
 
-Pair metadata with logs for faster triage:
+## Deployment
 
-```python
-# Example: Inspect failed task metadata and rendered fields
-task_meta = airflow_get_task_instance(
-    dag_id="etl_pipeline",
-    dag_run_id="scheduled__2025-10-30",
-    task_id="transform_data",
-    include_rendered=True,
-    max_rendered_bytes=100_000,
-)
-
-# Use try_number + ui_url.log to pull logs next
-logs = airflow_get_task_instance_logs(
-    dag_id="etl_pipeline",
-    dag_run_id="scheduled__2025-10-30",
-    task_id=task_meta["task_instance"]["task_id"],
-    try_number=task_meta["attempts"]["try_number"],
-    filter_level="error",
-)
-```
-
-**Highlights:**
-- `task_instance`: State, host, operator, timings (with computed `duration_ms`)
-- `task_config`: Owner, retries, retry_delay (when available)
-- `attempts`: Current try, retries consumed/remaining
-- `rendered_fields` (optional): Rendered template values with byte cap (`max_rendered_bytes`, default 100KB; truncated payload returns `{ "_truncated": "Increase max_rendered_bytes" }`)
-- `ui_url`: Direct `grid` and `log` links for the task attempt
-
-## Client Notes
-
-- MCP clients (e.g., IDEs) should call tools by name with JSON args and handle JSON responses.
-- For URL-based calls, the server validates the hostname against the configured registry (SSRF guard).
-- Write tools are annotated so MCP clients will prompt for confirmation before execution.
-
-## Add to MCP clients
-
-### Cursor – stdio (spawn on demand)
-
-Add an entry to `~/.cursor/mcp.json`. Cursor will spawn the server process and communicate over stdio.
-
-```json
-{
-  "mcpServers": {
-    "airflow-stdio": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/path/to/apache-airflow-mcp-server",
-        "run",
-        "airflow-mcp",
-        "--transport",
-        "stdio"
-      ],
-      "env": {
-        "AIRFLOW_MCP_INSTANCES_FILE": "/path/to/instances.yaml",
-        "AIRFLOW_MCP_DEFAULT_INSTANCE": "production"
-      }
-    }
-  }
-}
-```
-
-Notes:
-- Replace `/path/to/apache-airflow-mcp-server` and `/path/to/instances.yaml` with your paths.
-- No long-running server is required; Cursor starts the process per session.
-
-### Cursor – local HTTP
-
-Run the server yourself, then point Cursor at the HTTP endpoint.
-
-1) Start the server:
+### Docker
 
 ```bash
-uv run airflow-mcp --transport http --host 127.0.0.1 --port 8765
+docker build -t airflow-mcp .
+docker run -p 8765:8765 \
+  -e AIRFLOW_MCP_HOST=https://airflow.example.com \
+  -e AIRFLOW_MCP_USERNAME=admin \
+  -e AIRFLOW_MCP_PASSWORD=your-password \
+  airflow-mcp
 ```
 
-2) In `~/.cursor/mcp.json`:
+The container serves streamable HTTP on `:8765` (`/mcp` endpoint, `/health` for probes). Mount a registry YAML for multi-instance setups.
 
-```json
-{
-  "mcpServers": {
-    "airflow-local-http": {
-      "url": "http://127.0.0.1:8765/mcp"
-    }
-  }
-}
-```
+### FastMCP tooling
 
-### Cursor – remote HTTP
-
-Point Cursor at a deployed server. Optional headers can be added if fronted by an auth proxy.
-
-```json
-{
-  "mcpServers": {
-    "airflow-remote-http": {
-      "url": "https://airflow-mcp.internal.example.com/mcp",
-      "headers": {
-        "X-API-Key": "your-token-if-proxied"
-      }
-    }
-  }
-}
-```
-
-### Other clients
-
-- Many MCP clients accept either a stdio command or an HTTP URL; the examples above generalize.
-- A `fastmcp.json` is included for FastMCP-aware tooling that can auto-discover entrypoints.
+A `fastmcp.json` is included so FastMCP-aware tooling can auto-discover the entrypoint and deployment defaults.
 
 ## Development
 
 ```bash
-# Install dependencies
-uv sync
-
-# Run tests
-uv run pytest
-
-# Run linter
-uv run ruff check .
-
-# Run the server (stdio)
-uv run airflow-mcp --transport stdio
-
-# Run the server (HTTP)
-uv run airflow-mcp --transport http --host 127.0.0.1 --port 8765
+uv sync                 # install dependencies
+uv run pytest           # tests (no real network; the Airflow client is mocked)
+uv run ruff check .     # lint
+uv run ruff format .    # format
+uv run airflow-mcp --transport stdio   # run locally
 ```
 
-**Testing strategy:**
-- No real network calls; tests patch `airflow_mcp.client_factory._import_airflow_client`.
-- Reset registry cache in fixtures; assert `request_id` presence, URL precedence, and structured log fields.
+CI runs the suite against both `apache-airflow-client` majors on Python 3.10/3.12/3.13. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [AGENTS.md](AGENTS.md) if you're pointing a coding agent at this repo (it's written for that).
 
-**Observability:**
-- Structured logs with `tool_start`, `tool_success/tool_error`, `duration_ms`, `response_bytes`, and context fields.
+## Contributing
+
+Issues and PRs are welcome — especially:
+
+- Reports from real Airflow 3 deployments (the v2 support is new)
+- Additional tools (XComs, variables, pools, backfills)
+- Client setup recipes for more MCP hosts
+
+If this server saves you a debugging session, a ⭐ helps other Airflow teams find it.
 
 ## License
 
-Apache 2.0 - see [LICENSE](LICENSE) for details.
+Apache 2.0 — see [LICENSE](LICENSE).

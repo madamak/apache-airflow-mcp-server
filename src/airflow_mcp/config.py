@@ -15,6 +15,12 @@ class AirflowServerConfig(BaseSettings):
 
     timeout_seconds: int = Field(default=30, description="Default timeout for API calls")
 
+    token_refresh_seconds: int = Field(
+        default=3600,
+        description="Airflow 3 only: refresh the JWT obtained from basic credentials "
+        "after this many seconds",
+    )
+
     http_block_get_on_mcp: bool = Field(
         default=True,
         description="If true, block GET /mcp to avoid SSE read attempts on HTTP deployments",

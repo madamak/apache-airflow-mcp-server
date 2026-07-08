@@ -130,6 +130,35 @@ def _flatten_log_segments(segments: Any) -> str:
     return "\n".join(parts).strip("\n")
 
 
+def _format_structured_log_entry(entry: Any) -> str:
+    """Render an Airflow 3 structured log message as a plain text line."""
+
+    if isinstance(entry, dict):
+        data = dict(entry)
+    elif hasattr(entry, "to_dict"):
+        data = entry.to_dict()
+    else:
+        data = {"event": getattr(entry, "event", str(entry))}
+        timestamp = getattr(entry, "timestamp", None)
+        if timestamp is not None:
+            data["timestamp"] = timestamp
+
+    timestamp = data.pop("timestamp", None)
+    level = data.pop("level", None)
+    event = data.pop("event", "")
+    parts = []
+    if timestamp is not None:
+        parts.append(str(timestamp))
+    if level:
+        parts.append(str(level).upper())
+    parts.append(str(event))
+    # Surface remaining structured context (logger, error details, ...) compactly
+    extras = {k: v for k, v in data.items() if v is not None and k not in {"additional_properties"}}
+    if extras:
+        parts.append(" ".join(f"{k}={v}" for k, v in extras.items()))
+    return " ".join(p for p in parts if p)
+
+
 def _coerce_log_text(response: Any) -> str:
     """Coerce Airflow log responses into a single string."""
 
@@ -147,10 +176,22 @@ def _coerce_log_text(response: Any) -> str:
         return response
 
     content = getattr(response, "content", response)
+    # Airflow 3 clients wrap the anyOf content payload (List[StructuredLogMessage] |
+    # List[str]) in a model carrying the parsed value as `actual_instance`.
+    if hasattr(content, "actual_instance"):
+        content = content.actual_instance
     if isinstance(content, bytes):
         return content.decode("utf-8", errors="replace")
     if isinstance(content, (list, tuple)):
-        return _flatten_log_segments(content)
+        items = list(content)
+        if items and all(isinstance(i, str) for i in items):
+            # Airflow 3: plain list of pre-rendered log lines
+            return "\n".join(items)
+        if items and all(isinstance(i, dict) or hasattr(i, "event") for i in items):
+            # Airflow 3: structured log messages
+            return "\n".join(_format_structured_log_entry(i) for i in items)
+        # Airflow 2: host-segmented [(host, text), ...] tuples
+        return _flatten_log_segments(items)
     if content is None:
         return ""
     return str(content)

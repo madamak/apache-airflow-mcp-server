@@ -212,3 +212,67 @@ def _build_dag_body(**kwargs: Any) -> Any:
         return DAG(**payload)
     except Exception:
         return payload
+
+
+# --- Airflow 3.x (API v2) body builders -------------------------------------------------
+# The 3.x client models are pydantic; plain-dict fallbacks stay JSON-compatible so the
+# generated @validate_call wrappers can coerce them when the model import fails.
+
+
+def _build_v3_model(module_path: str, class_name: str, payload: dict[str, Any]) -> Any:
+    try:
+        model_cls = getattr(import_module(module_path), class_name)
+        return model_cls(**payload)
+    except Exception:
+        return payload
+
+
+def _build_trigger_dag_run_body(**kwargs: Any) -> Any:
+    """Create an Airflow 3 ``TriggerDAGRunPostBody`` (or plain dict fallback)."""
+    payload = {k: v for k, v in kwargs.items() if v is not None}
+    logical_date = _coerce_datetime(payload.get("logical_date"))
+    if logical_date is not None:
+        payload["logical_date"] = logical_date
+    return _build_v3_model(
+        "airflow_client.client.models.trigger_dag_run_post_body",
+        "TriggerDAGRunPostBody",
+        payload,
+    )
+
+
+def _build_dag_patch_body(**kwargs: Any) -> Any:
+    """Create an Airflow 3 ``DAGPatchBody`` (or plain dict fallback)."""
+    payload = {k: v for k, v in kwargs.items() if v is not None}
+    return _build_v3_model("airflow_client.client.models.dag_patch_body", "DAGPatchBody", payload)
+
+
+def _build_dag_run_clear_body(**kwargs: Any) -> Any:
+    """Create an Airflow 3 ``DAGRunClearBody`` (or plain dict fallback)."""
+    payload = {k: v for k, v in kwargs.items() if v is not None}
+    return _build_v3_model(
+        "airflow_client.client.models.dag_run_clear_body", "DAGRunClearBody", payload
+    )
+
+
+def _build_clear_task_instances_body(**kwargs: Any) -> Any:
+    """Create an Airflow 3 ``ClearTaskInstancesBody`` (or plain dict fallback)."""
+    payload = {k: v for k, v in kwargs.items() if v is not None}
+    for date_field in ("start_date", "end_date"):
+        parsed = _coerce_datetime(payload.get(date_field))
+        if parsed is not None:
+            payload[date_field] = parsed
+    # task_ids entries are an anyOf (task_id | [task_id, map_index]) wrapper model
+    task_ids = payload.get("task_ids")
+    if task_ids:
+        try:
+            inner_cls = import_module(
+                "airflow_client.client.models.clear_task_instances_body_task_ids_inner"
+            ).ClearTaskInstancesBodyTaskIdsInner
+            payload["task_ids"] = [inner_cls(actual_instance=tid) for tid in task_ids]
+        except Exception:
+            pass
+    return _build_v3_model(
+        "airflow_client.client.models.clear_task_instances_body",
+        "ClearTaskInstancesBody",
+        payload,
+    )

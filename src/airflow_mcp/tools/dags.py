@@ -10,7 +10,9 @@ from ..utils import json_safe_recursive as _json_safe
 from ..validation import validate_dag_id, validate_dag_run_id
 from ._common import (
     _build_dag_body,
+    _build_dag_patch_body,
     _build_dag_run_body,
+    _build_trigger_dag_run_body,
     _coerce_int,
     _normalize_conf,
     _parse_iso_datetime,
@@ -149,14 +151,24 @@ def trigger_dag(
             dag_run_id=dag_run_id_value,
         )
 
-        body = _build_dag_run_body(
-            dag_run_id=dag_run_id_value,
-            logical_date=logical_date_value,
-            conf=conf_obj,
-            note=note,
-        )
         api = _factory.get_dag_runs_api(resolved.instance)
-        response = api.post_dag_run(dag_id_value, dag_run=body)
+        if _factory.get_api_family(resolved.instance) == "v2":
+            # Airflow 3: POST /api/v2/dags/{dag_id}/dagRuns via trigger_dag_run
+            body = _build_trigger_dag_run_body(
+                dag_run_id=dag_run_id_value,
+                logical_date=logical_date_value,
+                conf=conf_obj,
+                note=note,
+            )
+            response = api.trigger_dag_run(dag_id_value, trigger_dag_run_post_body=body)
+        else:
+            body = _build_dag_run_body(
+                dag_run_id=dag_run_id_value,
+                logical_date=logical_date_value,
+                conf=conf_obj,
+                note=note,
+            )
+            response = api.post_dag_run(dag_id_value, dag_run=body)
         dag_run_payload = response.to_dict() if hasattr(response, "to_dict") else response
         response_run_id = getattr(response, "dag_run_id", None)
         if isinstance(dag_run_payload, dict):
@@ -206,12 +218,16 @@ def _set_dag_paused(
             instance=resolved.instance, dag_id=dag_id_value, desired_state=desired_state
         )
 
-        body = _build_dag_body(is_paused=desired_state)
         api = _factory.get_dags_api(resolved.instance)
-        # Airflow OpenAPI client expects update_mask as list[str] (observed on ≥2.7 clients).
-        # Older examples sometimes used a single string; list is backward compatible across
-        # supported versions (2.5–2.11), so we standardize on the list form.
-        response = api.patch_dag(dag_id_value, dag=body, update_mask=["is_paused"])
+        if _factory.get_api_family(resolved.instance) == "v2":
+            body = _build_dag_patch_body(is_paused=desired_state)
+            response = api.patch_dag(dag_id_value, dag_patch_body=body)
+        else:
+            body = _build_dag_body(is_paused=desired_state)
+            # Airflow OpenAPI client expects update_mask as list[str] (observed on ≥2.7 clients).
+            # Older examples sometimes used a single string; list is backward compatible across
+            # supported versions (2.5–2.11), so we standardize on the list form.
+            response = api.patch_dag(dag_id_value, dag=body, update_mask=["is_paused"])
         dag_payload_raw = response.to_dict() if hasattr(response, "to_dict") else response
         dag_payload = _json_safe(dag_payload_raw)
         ui = build_airflow_ui_url(resolved.instance, "grid", dag_id_value)

@@ -11,6 +11,7 @@ from ..validation import validate_dag_id, validate_dag_run_id
 from ._common import (
     ApiException,
     _build_clear_dag_run_body,
+    _build_dag_run_clear_body,
     _coerce_int,
     _raise_api_error,
 )
@@ -25,7 +26,7 @@ def list_dag_runs(
     limit: int | float | str = 100,
     offset: int | float | str = 0,
     state: list[str] | None = None,
-    order_by: Literal["start_date", "end_date", "execution_date"] | None = None,
+    order_by: Literal["start_date", "end_date", "execution_date", "logical_date"] | None = None,
     descending: bool = True,
 ) -> str:
     """List DAG runs for a DAG with per-run UI URLs.
@@ -68,7 +69,7 @@ def list_dag_runs(
         kwargs: dict[str, Any] = {"limit": limit_int, "offset": offset_int}
         if state:
             kwargs["state"] = state
-        allowed_fields = {"start_date", "end_date", "execution_date"}
+        allowed_fields = {"start_date", "end_date", "execution_date", "logical_date"}
         order_field = order_by
         order_desc = descending
         if order_by is None:
@@ -77,7 +78,8 @@ def list_dag_runs(
         else:
             if order_by not in allowed_fields:
                 raise AirflowToolError(
-                    "order_by must be one of 'start_date', 'end_date', or 'execution_date'",
+                    "order_by must be one of 'start_date', 'end_date', 'execution_date', "
+                    "or 'logical_date'",
                     code="INVALID_INPUT",
                     context={"field": "order_by", "value": order_by},
                 )
@@ -87,7 +89,14 @@ def list_dag_runs(
                     code="INVALID_INPUT",
                     context={"field": "descending", "value": descending},
                 )
-        order_token = f"-{order_field}" if order_desc else order_field
+        # Airflow renamed execution_date to logical_date in the v2 API (Airflow 3).
+        api_family = _factory.get_api_family(resolved.instance)
+        api_order_field = order_field
+        if api_family == "v2" and order_field == "execution_date":
+            api_order_field = "logical_date"
+        elif api_family == "v1" and order_field == "logical_date":
+            api_order_field = "execution_date"
+        order_token = f"-{api_order_field}" if order_desc else api_order_field
         kwargs["order_by"] = order_token
         op.update_context(order_by=order_field, descending=order_desc)
         try:
@@ -217,35 +226,41 @@ def clear_dag_run(
         # Use AIRFLOW_MCP_ENABLE_EXTENDED_CLEAR_PARAMS=true to enable extended params.
         from ..config import config
 
-        body_kwargs = {"dry_run": dry_run if dry_run is not None else False}
-        if config.enable_extended_clear_params:
-            if include_subdags is not None:
-                body_kwargs["include_subdags"] = include_subdags
-            if include_parentdag is not None:
-                body_kwargs["include_parentdag"] = include_parentdag
-            if include_upstream is not None:
-                body_kwargs["include_upstream"] = include_upstream
-            if include_downstream is not None:
-                body_kwargs["include_downstream"] = include_downstream
-            if reset_dag_runs is not None:
-                body_kwargs["reset_dag_runs"] = reset_dag_runs
-
-        body = _build_clear_dag_run_body(**body_kwargs)
         api = _factory.get_dag_runs_api(resolved.instance)
-        # Airflow client expects body under 'clear_dag_run' (observed on 2.5.x client).
-        # Some client codegens used 'clear_task_instances' or 'clear_task_instance'.
-        # Maintain fallbacks until all instances run a uniform client version.
-        try:
-            response = api.clear_dag_run(dag_id_value, dag_run_id_value, clear_dag_run=body)
-        except TypeError:
+        if _factory.get_api_family(resolved.instance) == "v2":
+            # Airflow 3: the v2 clear endpoint only supports dry_run/only_failed-style
+            # options; include_*/reset_dag_runs do not exist and are ignored.
+            body = _build_dag_run_clear_body(dry_run=dry_run if dry_run is not None else False)
+            response = api.clear_dag_run(dag_id_value, dag_run_id_value, dag_run_clear_body=body)
+        else:
+            body_kwargs = {"dry_run": dry_run if dry_run is not None else False}
+            if config.enable_extended_clear_params:
+                if include_subdags is not None:
+                    body_kwargs["include_subdags"] = include_subdags
+                if include_parentdag is not None:
+                    body_kwargs["include_parentdag"] = include_parentdag
+                if include_upstream is not None:
+                    body_kwargs["include_upstream"] = include_upstream
+                if include_downstream is not None:
+                    body_kwargs["include_downstream"] = include_downstream
+                if reset_dag_runs is not None:
+                    body_kwargs["reset_dag_runs"] = reset_dag_runs
+
+            body = _build_clear_dag_run_body(**body_kwargs)
+            # Airflow client expects body under 'clear_dag_run' (observed on 2.5.x client).
+            # Some client codegens used 'clear_task_instances' or 'clear_task_instance'.
+            # Maintain fallbacks until all instances run a uniform client version.
             try:
-                response = api.clear_dag_run(
-                    dag_id_value, dag_run_id_value, clear_task_instances=body
-                )
+                response = api.clear_dag_run(dag_id_value, dag_run_id_value, clear_dag_run=body)
             except TypeError:
-                response = api.clear_dag_run(
-                    dag_id_value, dag_run_id_value, clear_task_instance=body
-                )
+                try:
+                    response = api.clear_dag_run(
+                        dag_id_value, dag_run_id_value, clear_task_instances=body
+                    )
+                except TypeError:
+                    response = api.clear_dag_run(
+                        dag_id_value, dag_run_id_value, clear_task_instance=body
+                    )
         response_payload = response.to_dict() if hasattr(response, "to_dict") else response
         cleared_payload = response_payload
         if isinstance(response_payload, dict) and "cleared" in response_payload:

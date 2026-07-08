@@ -18,6 +18,7 @@ from ..validation import (
 from ._common import (
     ApiException,
     _build_clear_task_instance_body,
+    _build_clear_task_instances_body,
     _coerce_datetime,
     _coerce_int,
     _parse_iso_datetime,
@@ -384,10 +385,10 @@ def get_task_instance(
             "priority_weight": _coerce_int(getattr(task_instance, "priority_weight", None)),
         }
 
-        dags_api = _factory.get_dags_api(resolved.instance)
+        tasks_api = _factory.get_tasks_api(resolved.instance)
         task_details: Any | None = None
         try:
-            task_details = dags_api.get_task(dag_id_value, task_id_value)
+            task_details = tasks_api.get_task(dag_id_value, task_id_value)
         except AttributeError:  # pragma: no cover - defensive
             task_details = None
         except Exception:
@@ -551,36 +552,53 @@ def clear_task_instances(
         start_date_value = _parse_iso_datetime("start_date", start_date)
         end_date_value = _parse_iso_datetime("end_date", end_date)
 
-        body = _build_clear_task_instance_body(
-            task_ids=normalized_task_ids,
-            start_date=start_date_value,
-            end_date=end_date_value,
-            include_subdags=include_subdags,
-            include_parentdag=include_parentdag,
-            include_upstream=include_upstream,
-            include_downstream=include_downstream,
-            include_future=include_future,
-            include_past=include_past,
-            dry_run=dry_run if dry_run is not None else False,
-            reset_dag_runs=reset_dag_runs,
-        )
-        api = _factory.get_dags_api(resolved.instance)
-        # Airflow client uses POST endpoint for clearing task instances
-        # Version notes:
-        # - Airflow 2.5.x Python client (openapi): method is post_clear_task_instances and
-        #   expects the body kwarg named 'clear_task_instances' (plural).
-        # - Some older client codegens used 'clear_task_instance' (singular).
-        # - Even older clients use method name 'clear_task_instances' (no 'post_' prefix).
-        #   Keep fallbacks until all environments are on uniform client version.
-        try:
-            response = api.post_clear_task_instances(dag_id_value, clear_task_instances=body)
-        except (TypeError, AttributeError):
+        if _factory.get_api_family(resolved.instance) == "v2":
+            # Airflow 3: endpoint moved to the task instances API; subDAGs no longer exist,
+            # so include_subdags/include_parentdag are ignored.
+            body = _build_clear_task_instances_body(
+                task_ids=normalized_task_ids,
+                start_date=start_date_value,
+                end_date=end_date_value,
+                include_upstream=include_upstream,
+                include_downstream=include_downstream,
+                include_future=include_future,
+                include_past=include_past,
+                dry_run=dry_run if dry_run is not None else False,
+                reset_dag_runs=reset_dag_runs,
+            )
+            api = _factory.get_task_instances_api(resolved.instance)
+            response = api.post_clear_task_instances(dag_id_value, clear_task_instances_body=body)
+        else:
+            body = _build_clear_task_instance_body(
+                task_ids=normalized_task_ids,
+                start_date=start_date_value,
+                end_date=end_date_value,
+                include_subdags=include_subdags,
+                include_parentdag=include_parentdag,
+                include_upstream=include_upstream,
+                include_downstream=include_downstream,
+                include_future=include_future,
+                include_past=include_past,
+                dry_run=dry_run if dry_run is not None else False,
+                reset_dag_runs=reset_dag_runs,
+            )
+            api = _factory.get_dags_api(resolved.instance)
+            # Airflow client uses POST endpoint for clearing task instances
+            # Version notes:
+            # - Airflow 2.5.x Python client (openapi): method is post_clear_task_instances and
+            #   expects the body kwarg named 'clear_task_instances' (plural).
+            # - Some older client codegens used 'clear_task_instance' (singular).
+            # - Even older clients use method name 'clear_task_instances' (no 'post_' prefix).
+            #   Keep fallbacks until all environments are on uniform client version.
             try:
-                # Fallback for older client keyword name
-                response = api.post_clear_task_instances(dag_id_value, clear_task_instance=body)
+                response = api.post_clear_task_instances(dag_id_value, clear_task_instances=body)
             except (TypeError, AttributeError):
-                # Fallback for oldest client method name (no 'post_' prefix)
-                response = api.clear_task_instances(dag_id_value, clear_task_instance=body)
+                try:
+                    # Fallback for older client keyword name
+                    response = api.post_clear_task_instances(dag_id_value, clear_task_instance=body)
+                except (TypeError, AttributeError):
+                    # Fallback for oldest client method name (no 'post_' prefix)
+                    response = api.clear_task_instances(dag_id_value, clear_task_instance=body)
         response_payload = response.to_dict() if hasattr(response, "to_dict") else response
         cleared_payload = response_payload
         if isinstance(response_payload, dict) and "cleared" in response_payload:

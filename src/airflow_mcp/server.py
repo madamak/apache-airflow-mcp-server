@@ -166,7 +166,7 @@ def airflow_list_dag_runs(
     limit: int | float | str = 100,
     offset: int | float | str = 0,
     state: list[str] | None = None,
-    order_by: Literal["start_date", "end_date", "execution_date"] | None = None,
+    order_by: Literal["start_date", "end_date", "execution_date", "logical_date"] | None = None,
     descending: bool = True,
 ) -> dict[str, Any]:
     """List DAG runs (defaults to execution_date DESC) with per-run UI URLs.
@@ -178,7 +178,7 @@ def airflow_list_dag_runs(
     - limit: Max results (default 100; accepts int/float/str, coerced to non-negative int, fractional values truncated)
     - offset: Offset for pagination (default 0; accepts int/float/str, coerced to non-negative int, fractional values truncated)
     - state: List of states to filter by (optional)
-    - order_by: Optional `"start_date"`, `"end_date"`, or `"execution_date"` (omit to use ``execution_date``)
+    - order_by: Optional `"start_date"`, `"end_date"`, `"execution_date"`, or `"logical_date"` (omit to use ``execution_date``; execution_date and logical_date are mapped to whichever name the target Airflow version uses)
     - descending: Sort direction (default True). Ignored when order_by is omitted; defaults always use execution_date descending
 
     Returns

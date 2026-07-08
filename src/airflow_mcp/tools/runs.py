@@ -97,7 +97,8 @@ def list_dag_runs(
         elif api_family == "v1" and order_field == "logical_date":
             api_order_field = "execution_date"
         order_token = f"-{api_order_field}" if order_desc else api_order_field
-        kwargs["order_by"] = order_token
+        # apache-airflow-client >=3.1 types order_by as List[str]; earlier codegens take str.
+        kwargs["order_by"] = [order_token] if api_family == "v2" else order_token
         op.update_context(order_by=order_field, descending=order_desc)
         try:
             resp = api.get_dag_runs(dag_id_value, **kwargs)
@@ -107,6 +108,21 @@ def list_dag_runs(
                 "Unable to list DAG runs",
                 context={"dag_id": dag_id_value, "instance": resolved.instance},
             )
+        except (TypeError, ValueError):
+            # Codegens disagree on the order_by shape (str vs list); retry with the
+            # other form. Pydantic-validated 3.x clients raise ValidationError
+            # (a ValueError subclass), older ones raise TypeError.
+            alt_kwargs = dict(kwargs)
+            token = alt_kwargs["order_by"]
+            alt_kwargs["order_by"] = token[0] if isinstance(token, list) else [token]
+            try:
+                resp = api.get_dag_runs(dag_id_value, **alt_kwargs)
+            except ApiException as exc:
+                _raise_api_error(
+                    exc,
+                    "Unable to list DAG runs",
+                    context={"dag_id": dag_id_value, "instance": resolved.instance},
+                )
         runs = []
         for r in getattr(resp, "dag_runs", []) or []:
             dr_id = getattr(r, "dag_run_id", None)
@@ -229,7 +245,23 @@ def clear_dag_run(
         api = _factory.get_dag_runs_api(resolved.instance)
         if _factory.get_api_family(resolved.instance) == "v2":
             # Airflow 3: the v2 clear endpoint only supports dry_run/only_failed-style
-            # options; include_*/reset_dag_runs do not exist and are ignored.
+            # options. Reject the removed options explicitly rather than silently
+            # narrowing the scope of a destructive operation.
+            unsupported = {
+                "include_subdags": include_subdags,
+                "include_parentdag": include_parentdag,
+                "include_upstream": include_upstream,
+                "include_downstream": include_downstream,
+                "reset_dag_runs": reset_dag_runs,
+            }
+            requested = [name for name, value in unsupported.items() if value]
+            if requested:
+                raise AirflowToolError(
+                    f"Options not supported by the Airflow 3 clear-run endpoint: "
+                    f"{', '.join(requested)}; omit them for this instance",
+                    code="INVALID_INPUT",
+                    context={"instance": resolved.instance, "unsupported": requested},
+                )
             body = _build_dag_run_clear_body(dry_run=dry_run if dry_run is not None else False)
             response = api.clear_dag_run(dag_id_value, dag_run_id_value, dag_run_clear_body=body)
         else:

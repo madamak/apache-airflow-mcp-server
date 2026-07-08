@@ -209,20 +209,17 @@ def list_task_instances(
         if state_filters and supports_state:
             kwargs["state"] = state_filters
         if task_id_filters and task_id_param_name:
-            kwargs[task_id_param_name] = task_id_filters
+            if task_id_param_name == "task_id":
+                # Airflow 3 client exposes a single-value `task_id` filter (strict str).
+                # Forward it only for a single filter; multi-value filtering happens
+                # in memory below either way.
+                if len(task_id_filters) == 1:
+                    kwargs["task_id"] = task_id_filters[0]
+            else:
+                kwargs[task_id_param_name] = task_id_filters
 
         try:
             resp = method(dag_id_value, dag_run_id_value, **kwargs)
-        except TypeError:
-            # Fallback: Client might not support the passed kwargs (state/task_ids)
-            # despite our best-effort introspection. Retry without filters and
-            # rely on the in-memory filtering below.
-            # We still need limit/offset if supported, but standardizing on minimal
-            # args for safety is better than crashing.
-            # Re-build minimal kwargs
-            safe_kwargs = {"limit": limit_int, "offset": offset_int}
-            resp = method(dag_id_value, dag_run_id_value, **safe_kwargs)
-
         except ApiException as exc:
             _raise_api_error(
                 exc,
@@ -233,6 +230,24 @@ def list_task_instances(
                     "instance": resolved.instance,
                 },
             )
+        except (TypeError, ValueError):
+            # Fallback: the client might not support the passed kwargs (state/task_ids)
+            # despite our best-effort introspection — older codegens raise TypeError,
+            # pydantic-validated 3.x codegens raise ValidationError (a ValueError).
+            # Retry without filters and rely on the in-memory filtering below.
+            safe_kwargs = {"limit": limit_int, "offset": offset_int}
+            try:
+                resp = method(dag_id_value, dag_run_id_value, **safe_kwargs)
+            except ApiException as exc:
+                _raise_api_error(
+                    exc,
+                    "Unable to list task instances",
+                    context={
+                        "dag_id": dag_id_value,
+                        "dag_run_id": dag_run_id_value,
+                        "instance": resolved.instance,
+                    },
+                )
 
         state_filter_set = {s.lower() for s in state_filters} if state_filters else None
         task_id_filter_set = set(task_id_filters) if task_id_filters else None
@@ -446,7 +461,7 @@ def get_task_instance(
             sanitized_fields_value = _json_safe(fields_value)
             rendered_json = json.dumps(sanitized_fields_value, ensure_ascii=False)
             rendered_bytes = rendered_json.encode("utf-8")
-            truncated = len(rendered_bytes) > max_rendered_bytes
+            truncated = len(rendered_bytes) > max_bytes_int
             if truncated:
                 fields_value = {"_truncated": "Increase max_rendered_bytes"}
                 rendered_bytes = json.dumps(fields_value, ensure_ascii=False).encode("utf-8")
@@ -553,8 +568,16 @@ def clear_task_instances(
         end_date_value = _parse_iso_datetime("end_date", end_date)
 
         if _factory.get_api_family(resolved.instance) == "v2":
-            # Airflow 3: endpoint moved to the task instances API; subDAGs no longer exist,
-            # so include_subdags/include_parentdag are ignored.
+            # Airflow 3: endpoint moved to the task instances API. SubDAGs no longer
+            # exist, so reject those options explicitly rather than silently narrowing
+            # the scope of a destructive operation.
+            if include_subdags or include_parentdag:
+                raise AirflowToolError(
+                    "include_subdags/include_parentdag are not supported by Airflow 3 "
+                    "(subDAGs were removed); omit them for this instance",
+                    code="INVALID_INPUT",
+                    context={"instance": resolved.instance},
+                )
             body = _build_clear_task_instances_body(
                 task_ids=normalized_task_ids,
                 start_date=start_date_value,

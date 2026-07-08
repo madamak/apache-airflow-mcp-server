@@ -7,15 +7,18 @@ Module-level guidance for the Airflow MCP server source. Use this when adding or
 - `server.py`
   - Registers FastMCP tools and HTTP routes; keep minimal and declarative.
   - Applies `@handle_errors` and tool annotations; no business logic here.
-- `tools.py`
+- `tools/` (package: `dags.py`, `runs.py`, `tasks.py`, `task_logs.py`, `datasets.py`, `instances.py`, `_common.py`)
   - Implements tool logic: validate → resolve instance/URL → call Airflow client → shape JSON.
   - Must return structured dict payloads; `observability.OperationLogger.success()` injects `request_id`.
+  - Version-specific calls branch on `client_factory.get_api_family(instance)` ("v1" = Airflow 2, "v2" = Airflow 3); request-body models are built in `_common.py` with dict fallbacks.
 - `registry.py`
-  - Loads instance registry YAML with `${VAR}` substitution.
+  - Loads instance registry YAML with `${VAR}` substitution, or builds a single instance from `AIRFLOW_MCP_HOST`/credentials env vars.
+  - `InstanceConfig.api_family`/`resolved_api_version` are the single source of truth for version detection; an unset `api_version` is inferred from the installed apache-airflow-client major (`default_api_version()`).
   - `get_registry()` caches the parsed registry; `reset_registry_cache()` exists for tests.
 - `client_factory.py`
-  - Provides cached `apache-airflow-client` instances per registry key; applies basic auth, SSL, and timeouts.
-  - Accessors: `get_dags_api`, `get_dag_runs_api`, `get_task_instances_api`, `get_dataset_events_api`.
+  - Provides cached `apache-airflow-client` instances per registry key; applies auth (basic, bearer, and JWT exchange for Airflow 3), SSL, and timeouts. JWT tokens from basic credentials refresh in place on `AIRFLOW_MCP_TOKEN_REFRESH_SECONDS`.
+  - Accessors: `get_dags_api`, `get_dag_runs_api`, `get_task_instances_api`, `get_tasks_api`, `get_dataset_events_api` — each returns the API class matching the instance's family (2.x `apis.*` vs 3.x top-level classes).
+  - Configuration/auth failures raise `AirflowToolError` (codes `CONFIG_ERROR`, `AUTH_FAILED`) so actionable messages reach MCP clients instead of being masked as `INTERNAL_ERROR`.
 - `url_utils.py`
   - `parse_airflow_ui_url` resolves instance and identifiers from UI URLs with strict hostname matching.
   - `build_airflow_ui_url` constructs canonical links. `resolve_and_validate` enforces `ui_url` precedence and mismatch errors.
@@ -26,7 +29,7 @@ Module-level guidance for the Airflow MCP server source. Use this when adding or
 - `errors.py`
   - `AirflowToolError` for user-facing validation errors. `handle_errors` logs with context and raises MCP `ToolError` containing a compact JSON payload.
 - `config.py`
-  - Pydantic settings with `AIRFLOW_MCP_*` env prefix (timeouts, HTTP bind, log file, registry file, default instance).
+  - Pydantic settings with `AIRFLOW_MCP_*` env prefix (timeouts, HTTP bind, log file, registry file, default instance, single-instance host/credentials, `api_version`, `read_only`, `token_refresh_seconds`).
 - `formatting/`
   - Reserved. No table rendering; outputs remain JSON-only.
 

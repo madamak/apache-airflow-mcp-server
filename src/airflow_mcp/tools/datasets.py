@@ -43,13 +43,24 @@ def dataset_events(
         api = _factory.get_dataset_events_api(resolved.instance)
         if _factory.get_api_family(resolved.instance) == "v2":
             # Airflow 3 renamed datasets to assets and filters events by asset_id,
-            # so resolve the asset by URI first.
-            assets_resp = api.get_assets(uri_pattern=dataset_uri_value, limit=100)
+            # so resolve the asset by URI first. uri_pattern is a substring match,
+            # so paginate until the exact URI is found.
             asset_id = None
-            for asset in getattr(assets_resp, "assets", []) or []:
-                if getattr(asset, "uri", None) == dataset_uri_value:
-                    asset_id = getattr(asset, "id", None)
+            page_size = 100
+            max_pages = 50  # backstop against a pathological pattern match
+            offset = 0
+            for _ in range(max_pages):
+                assets_resp = api.get_assets(
+                    uri_pattern=dataset_uri_value, limit=page_size, offset=offset
+                )
+                assets = getattr(assets_resp, "assets", []) or []
+                for asset in assets:
+                    if getattr(asset, "uri", None) == dataset_uri_value:
+                        asset_id = getattr(asset, "id", None)
+                        break
+                if asset_id is not None or len(assets) < page_size:
                     break
+                offset += page_size
             if asset_id is None:
                 raise AirflowToolError(
                     f"No asset found with uri '{dataset_uri_value}'",
@@ -61,9 +72,8 @@ def dataset_events(
         else:
             resp = api.get_dataset_events(limit=limit_int, uri=dataset_uri_value)
             raw_events = getattr(resp, "dataset_events", []) or []
-        events = [e.to_dict() if hasattr(e, "to_dict") else e for e in raw_events]
         payload = {
-            "events": _json_safe(events),
-            "count": getattr(resp, "total_entries", len(events)),
+            "events": _json_safe(raw_events),
+            "count": getattr(resp, "total_entries", len(raw_events)),
         }
         return op.success(payload)

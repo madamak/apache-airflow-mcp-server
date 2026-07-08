@@ -230,9 +230,9 @@ def _build_v3_model(module_path: str, class_name: str, payload: dict[str, Any]) 
 def _build_trigger_dag_run_body(**kwargs: Any) -> Any:
     """Create an Airflow 3 ``TriggerDAGRunPostBody`` (or plain dict fallback)."""
     payload = {k: v for k, v in kwargs.items() if v is not None}
-    logical_date = _coerce_datetime(payload.get("logical_date"))
-    if logical_date is not None:
-        payload["logical_date"] = logical_date
+    # Airflow 3.0.x declares logical_date required-but-nullable: the key must be present
+    # even when null, so never strip it.
+    payload["logical_date"] = _coerce_datetime(kwargs.get("logical_date"))
     return _build_v3_model(
         "airflow_client.client.models.trigger_dag_run_post_body",
         "TriggerDAGRunPostBody",

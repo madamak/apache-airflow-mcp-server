@@ -15,6 +15,7 @@ from test_tools_readonly import _payload
 
 from airflow_mcp import client_factory as cf
 from airflow_mcp import tools as airflow_tools
+from airflow_mcp.errors import AirflowToolError
 from airflow_mcp.registry import reset_registry_cache
 from airflow_mcp.url_utils import build_airflow_ui_url, parse_airflow_ui_url
 
@@ -70,6 +71,10 @@ class _DagRunApi:
         self._c = api_client
 
     def get_dag_runs(self, dag_id, **kwargs):
+        # Mirror the 3.1+ codegen: order_by is Optional[List[StrictStr]]
+        order_by = kwargs.get("order_by")
+        if order_by is not None and not isinstance(order_by, list):
+            raise ValueError("order_by must be a list of strings")
         self._c.calls["get_dag_runs"] = {"dag_id": dag_id, **kwargs}
         return _Obj(
             dag_runs=[
@@ -107,7 +112,16 @@ class _TaskInstanceApi:
     def __init__(self, api_client) -> None:
         self._c = api_client
 
-    def get_task_instances(self, dag_id, dag_run_id, **kwargs):
+    def get_task_instances(self, dag_id, dag_run_id, limit=100, offset=0, state=None, task_id=None):
+        # Signature mirrors the 3.x codegen: `task_id` is a single Optional[StrictStr].
+        if task_id is not None and not isinstance(task_id, str):
+            raise ValueError("task_id must be a string")
+        self._c.calls["get_task_instances"] = {
+            "dag_id": dag_id,
+            "dag_run_id": dag_run_id,
+            "state": state,
+            "task_id": task_id,
+        }
         return _Obj(
             task_instances=[
                 _Obj(task_id="extract", state="failed", try_number=2),
@@ -158,7 +172,9 @@ class _AssetApi:
     def __init__(self, api_client) -> None:
         self._c = api_client
 
-    def get_assets(self, uri_pattern=None, limit=100):
+    def get_assets(self, uri_pattern=None, limit=100, offset=0):
+        if offset:
+            return _Obj(assets=[], total_entries=1)
         return _Obj(
             assets=[_Obj(id=42, uri="s3://bucket/data", name="data")],
             total_entries=1,
@@ -226,8 +242,9 @@ def test_v2_with_2x_client_raises_actionable_error(
     monkeypatch.setattr(cf, "_import_airflow_client_v3", lambda: SimpleNamespace())
     factory = cf.get_client_factory()
     factory._cache.clear()
-    with pytest.raises(RuntimeError) as exc:
+    with pytest.raises(AirflowToolError) as exc:
         factory.get_api_client(v2_instance)
+    assert exc.value.code == "CONFIG_ERROR"
     assert "apache-airflow-client>=3" in str(exc.value)
 
 
@@ -313,6 +330,66 @@ def test_clear_task_instances_moved_to_task_instance_api(v2_instance: str):
     assert _field(call["body"], "dry_run") is True
 
 
+def test_clear_dag_run_rejects_unsupported_options_on_v2(v2_instance: str):
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.clear_dag_run(
+            instance=v2_instance,
+            dag_id="etl",
+            dag_run_id="run_1",
+            include_downstream=True,
+            dry_run=False,
+        )
+    assert exc.value.code == "INVALID_INPUT"
+    assert "include_downstream" in str(exc.value)
+
+
+def test_clear_task_instances_rejects_subdag_options_on_v2(v2_instance: str):
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.clear_task_instances(instance=v2_instance, dag_id="etl", include_subdags=True)
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_list_task_instances_forwards_single_task_id_filter(v2_instance: str):
+    # The 3.x codegen exposes `task_id` as a single strict str; a list must not be
+    # forwarded (it would fail pydantic validation on the real client).
+    out = airflow_tools.list_task_instances(
+        instance=v2_instance,
+        dag_id="etl",
+        dag_run_id="run_1",
+        task_ids=["extract"],
+    )
+    payload = _payload(out)
+    assert payload["count"] == 1
+    assert payload["task_instances"][0]["task_id"] == "extract"
+    client = cf.get_client_factory().get_api_client(v2_instance)
+    assert client.calls["get_task_instances"]["task_id"] == "extract"
+
+
+def test_list_task_instances_multi_task_ids_filtered_client_side(v2_instance: str):
+    out = airflow_tools.list_task_instances(
+        instance=v2_instance,
+        dag_id="etl",
+        dag_run_id="run_1",
+        task_ids=["extract", "load"],
+    )
+    payload = _payload(out)
+    assert payload["count"] == 2
+    client = cf.get_client_factory().get_api_client(v2_instance)
+    # Multi-value filter must not be forwarded to the single-value param
+    assert client.calls["get_task_instances"]["task_id"] is None
+
+
+def test_trigger_body_always_includes_logical_date(v2_instance: str):
+    airflow_tools.trigger_dag(instance=v2_instance, dag_id="etl")
+    client = cf.get_client_factory().get_api_client(v2_instance)
+    body = client.calls["trigger_dag_run"]["body"]
+    # Airflow 3.0.x requires the key to be present (nullable); it must not be stripped
+    if isinstance(body, dict):
+        assert "logical_date" in body and body["logical_date"] is None
+    else:
+        assert hasattr(body, "logical_date")
+
+
 def test_list_dag_runs_maps_execution_date_to_logical_date(v2_instance: str):
     out = airflow_tools.list_dag_runs(
         instance=v2_instance, dag_id="etl", order_by="execution_date", descending=True
@@ -320,7 +397,8 @@ def test_list_dag_runs_maps_execution_date_to_logical_date(v2_instance: str):
     payload = _payload(out)
     assert payload["count"] == 1
     client = cf.get_client_factory().get_api_client(v2_instance)
-    assert client.calls["get_dag_runs"]["order_by"] == "-logical_date"
+    # 3.1+ codegen expects order_by as a list
+    assert client.calls["get_dag_runs"]["order_by"] == ["-logical_date"]
 
 
 def test_get_task_instance_logs_normalizes_structured_content(v2_instance: str):

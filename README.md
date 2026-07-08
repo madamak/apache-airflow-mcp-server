@@ -29,7 +29,7 @@ Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this f
 uv tool install apache-airflow-mcp-server   # or: pip install apache-airflow-mcp-server
 ```
 
-> **Airflow 3?** Also run `uv tool install apache-airflow-mcp-server --with 'apache-airflow-client>=3,<4'` — see [Airflow compatibility](#airflow-compatibility).
+> **Airflow 2 (2.5–2.11)?** Install with the matching client: `uv tool install apache-airflow-mcp-server --with 'apache-airflow-client<3'` — see [Airflow compatibility](#airflow-compatibility). A plain install targets Airflow 3.
 
 ### 2. Connect your MCP client
 
@@ -142,18 +142,20 @@ Health check: `GET /health` → `200 OK`.
 
 ## Airflow compatibility
 
-The server talks to Airflow through the official `apache-airflow-client`. Install the client major that matches your Airflow:
+The server talks to Airflow through the official `apache-airflow-client`, and supports both client majors. A plain install resolves the newest client (3.x, for Airflow 3); Airflow 2 users pin the 2.x client alongside:
 
 | Your Airflow | REST API | Install | Status |
 |---|---|---|---|
-| 2.5 – 2.11 | v1 | `pip install 'apache-airflow-client<3'` (default) | ✅ Stable |
-| 3.x | v2 | `pip install 'apache-airflow-client>=3,<4'` and set `api_version: v2` | 🧪 Experimental |
+| 3.x | v2 | `uv tool install apache-airflow-mcp-server` (plain install) | 🧪 Experimental |
+| 2.5 – 2.11 | v1 | `uv tool install apache-airflow-mcp-server --with 'apache-airflow-client<3'` (or `pip install apache-airflow-mcp-server 'apache-airflow-client<3'`) | ✅ Stable |
 
-For Airflow 3, set `AIRFLOW_MCP_API_VERSION=v2` (or `api_version: v2` per instance in the registry YAML). Notes:
+When `api_version` isn't set, the server assumes the API matching the installed client (`v1` for the 2.x client, `v2` for 3.x), so the pairings above work with no further configuration. Set `AIRFLOW_MCP_API_VERSION` (or `api_version:` per instance in the registry YAML) to `v1`/`v2` explicitly if you want to be sure — a mismatch between the client and the instance produces an error explaining exactly which client to install.
 
-- **Auth**: bearer tokens are passed through as JWTs; basic credentials are automatically exchanged for a JWT via `POST /auth/token` and refreshed periodically (`AIRFLOW_MCP_TOKEN_REFRESH_SECONDS`, default 3600).
+Airflow 3 notes:
+
+- **Auth**: bearer tokens are passed through as JWTs; basic credentials are automatically exchanged for a JWT via `POST /auth/token` and refreshed periodically (`AIRFLOW_MCP_TOKEN_REFRESH_SECONDS`, default 3600 — keep it below your deployment's JWT expiry, and note there is no automatic re-auth on 401 yet).
 - `execution_date` ordering maps to `logical_date`, datasets map to assets, and UI links use the Airflow 3 route scheme — tool inputs/outputs stay the same.
-- `include_subdags`/`include_parentdag` clear options don't exist in Airflow 3 and are ignored.
+- Clear options that no longer exist in Airflow 3 (`include_subdags`/`include_parentdag`, and the `include_*`/`reset_dag_runs` options of `airflow_clear_dag_run`) are rejected with `INVALID_INPUT` rather than silently narrowing a destructive operation.
 
 Both client majors are exercised in CI on every commit. Bug reports from real Airflow 3 deployments are very welcome!
 
@@ -166,7 +168,7 @@ Both client majors are exercised in CI on every commit. Bug reports from real Ai
 | `AIRFLOW_MCP_HOST` | ✅ | Airflow base URL, e.g. `https://airflow.example.com` |
 | `AIRFLOW_MCP_USERNAME` / `AIRFLOW_MCP_PASSWORD` | ✅* | Basic auth credentials |
 | `AIRFLOW_MCP_TOKEN` | ✅* | Bearer/JWT token (used instead of basic auth) |
-| `AIRFLOW_MCP_API_VERSION` | | `v1` (Airflow 2, default) or `v2` (Airflow 3) |
+| `AIRFLOW_MCP_API_VERSION` | | `v1` (Airflow 2) or `v2` (Airflow 3); defaults to whichever matches the installed `apache-airflow-client` |
 | `AIRFLOW_MCP_VERIFY_SSL` | | Verify TLS certificates (default `true`) |
 
 \* provide either username+password or a token.
@@ -193,7 +195,7 @@ ml-prod:
     token: ${AIRFLOW_ML_PROD_TOKEN}
 ```
 
-Tools accept an `instance` key (`data-stg`) or an Airflow UI URL — the server resolves the URL's host against the registry and rejects anything unknown (SSRF guard).
+Every tool accepts either an `instance` key (`data-stg`) or a `ui_url` — a full http(s) Airflow UI URL whose host is resolved against the registry, with unknown hosts rejected (SSRF guard). `ui_url` also auto-fills `dag_id`/`dag_run_id`/`task_id` when the link contains them. If both `instance` and `ui_url` are passed and disagree, the call fails with `INSTANCE_MISMATCH` rather than guessing.
 
 **Kubernetes tip:** mount the registry from a Secret at `/config/instances.yaml` and set `AIRFLOW_MCP_INSTANCES_FILE=/config/instances.yaml`.
 
@@ -208,6 +210,7 @@ Tools accept an `instance` key (`data-stg`) or an Airflow UI URL — the server 
 | `AIRFLOW_MCP_TOKEN_REFRESH_SECONDS` | `3600` | Airflow 3: JWT refresh interval for basic-auth instances |
 | `AIRFLOW_MCP_LOG_FILE` | | Optional log file path |
 | `AIRFLOW_MCP_ENABLE_EXTENDED_CLEAR_PARAMS` | `false` | Enable `include_*` clear params (Airflow ≥2.6) |
+| `AIRFLOW_MCP_HTTP_BLOCK_GET_ON_MCP` | `true` | Return 405 for `GET /mcp` (SSE reads) on HTTP deployments |
 
 ### Read-only mode
 

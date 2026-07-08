@@ -153,7 +153,9 @@ def trigger_dag(
 
         api = _factory.get_dag_runs_api(resolved.instance)
         if _factory.get_api_family(resolved.instance) == "v2":
-            # Airflow 3: POST /api/v2/dags/{dag_id}/dagRuns via trigger_dag_run
+            # Airflow 3: POST /api/v2/dags/{dag_id}/dagRuns via trigger_dag_run.
+            # logical_date is always sent (null when omitted): Airflow 3.0.x declares it
+            # required-but-nullable and rejects bodies that omit the key entirely.
             body = _build_trigger_dag_run_body(
                 dag_run_id=dag_run_id_value,
                 logical_date=logical_date_value,

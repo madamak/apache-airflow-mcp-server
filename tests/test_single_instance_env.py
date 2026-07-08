@@ -7,7 +7,12 @@ from test_tools_readonly import _payload
 
 from airflow_mcp import tools as airflow_tools
 from airflow_mcp.config import AirflowServerConfig
-from airflow_mcp.registry import build_single_instance_registry, reset_registry_cache
+from airflow_mcp.errors import AirflowToolError
+from airflow_mcp.registry import (
+    build_single_instance_registry,
+    default_api_version,
+    reset_registry_cache,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +44,8 @@ def test_build_single_instance_basic_auth():
     inst = reg.instances["default"]
     assert inst.host == "https://airflow.example.com"
     assert inst.auth.type == "basic"
-    assert inst.api_version == "v1"
+    # api_version defaults to whichever matches the installed apache-airflow-client
+    assert inst.resolved_api_version == default_api_version()
     assert inst.verify_ssl is True
 
 
@@ -68,10 +74,24 @@ def test_build_single_instance_custom_key_via_default_instance():
 
 def test_build_single_instance_missing_credentials():
     settings = AirflowServerConfig(host="https://airflow.example.com")
-    with pytest.raises(RuntimeError) as exc:
+    with pytest.raises(AirflowToolError) as exc:
         build_single_instance_registry(settings)
+    assert exc.value.code == "CONFIG_ERROR"
     assert "AIRFLOW_MCP_USERNAME" in str(exc.value)
     assert "AIRFLOW_MCP_TOKEN" in str(exc.value)
+
+
+def test_invalid_api_version_rejected():
+    settings = AirflowServerConfig(
+        host="https://airflow.example.com",
+        username="admin",
+        password="secret",
+        api_version="3",
+    )
+    with pytest.raises(AirflowToolError) as exc:
+        build_single_instance_registry(settings)
+    assert exc.value.code == "CONFIG_ERROR"
+    assert "api_version" in str(exc.value)
 
 
 def test_discovery_tools_with_env_only_config(monkeypatch: pytest.MonkeyPatch):

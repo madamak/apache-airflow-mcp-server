@@ -159,7 +159,7 @@ def _format_structured_log_entry(entry: Any) -> str:
     return " ".join(p for p in parts if p)
 
 
-def _coerce_log_text(response: Any) -> str:
+def _coerce_log_text(response: Any, api_family: str = "v1") -> str:
     """Coerce Airflow log responses into a single string."""
 
     if isinstance(response, str):
@@ -184,12 +184,13 @@ def _coerce_log_text(response: Any) -> str:
         return content.decode("utf-8", errors="replace")
     if isinstance(content, (list, tuple)):
         items = list(content)
-        if items and all(isinstance(i, str) for i in items):
-            # Airflow 3: plain list of pre-rendered log lines
-            return "\n".join(items)
-        if items and all(isinstance(i, dict) or hasattr(i, "event") for i in items):
-            # Airflow 3: structured log messages
-            return "\n".join(_format_structured_log_entry(i) for i in items)
+        if api_family == "v2" and items:
+            if all(isinstance(i, str) for i in items):
+                # Airflow 3: plain list of pre-rendered log lines
+                return "\n".join(items)
+            if all(isinstance(i, dict) or hasattr(i, "event") for i in items):
+                # Airflow 3: structured log messages
+                return "\n".join(_format_structured_log_entry(i) for i in items)
         # Airflow 2: host-segmented [(host, text), ...] tuples
         return _flatten_log_segments(items)
     if content is None:
@@ -319,7 +320,7 @@ def get_task_instance_logs(
                 code="INTERNAL_ERROR",
                 context={"api": type(api).__name__},
             )
-        log_text = _coerce_log_text(resp)
+        log_text = _coerce_log_text(resp, api_family=_factory.get_api_family(resolved.instance))
         ui = build_airflow_ui_url(
             resolved.instance,
             "log",

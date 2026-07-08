@@ -49,8 +49,10 @@ class AirflowServerConfig(BaseSettings):
     token: str | None = Field(
         default=None, description="Bearer token for single-instance mode (used over basic auth)"
     )
-    api_version: str = Field(
-        default="v1", description="Airflow REST API version for single-instance mode"
+    api_version: str | None = Field(
+        default=None,
+        description="Airflow REST API version for single-instance mode: 'v1' (Airflow 2) or "
+        "'v2' (Airflow 3). Defaults to whichever matches the installed apache-airflow-client",
     )
     verify_ssl: bool = Field(
         default=True, description="Verify SSL certificates in single-instance mode"

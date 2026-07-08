@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import logging
 import ssl
+import threading
 import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .config import config as _server_config
+from .errors import AirflowToolError
 from .registry import get_registry
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,8 @@ logger = logging.getLogger(__name__)
 class AirflowApiBundle:
     api_client: Any
     config: Any
-    created_at: float = field(default_factory=time.monotonic)
-    needs_token_refresh: bool = False
+    # monotonic deadline after which the JWT must be re-fetched; None = never expires
+    token_expires_at: float | None = None
 
 
 def _import_airflow_client() -> tuple[Any, Any, Any]:
@@ -44,20 +45,6 @@ def _import_airflow_client_v3() -> Any:
     return client_mod
 
 
-def installed_client_major() -> int | None:
-    """Best-effort detection of the installed apache-airflow-client major version.
-
-    Returns 2 for the Airflow 2.x codegen (has ``airflow_client.client.apis``),
-    3 for the Airflow 3.x codegen, or None when the client is not installed.
-    """
-    try:
-        if importlib.util.find_spec("airflow_client.client") is None:
-            return None
-        return 2 if importlib.util.find_spec("airflow_client.client.apis") else 3
-    except (ImportError, ModuleNotFoundError, ValueError):  # pragma: no cover - defensive
-        return None
-
-
 def _fetch_jwt_token(
     host: str, username: str, password: str, *, verify_ssl: bool, timeout: int
 ) -> str:
@@ -77,14 +64,18 @@ def _fetch_jwt_token(
         with urllib.request.urlopen(request, timeout=timeout, context=ssl_context) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
-        raise RuntimeError(
+        raise AirflowToolError(
             f"Failed to obtain JWT token from {url}: {exc}. "
             "Airflow 3 (api_version v2) authenticates with JWT; ensure the credentials are "
-            "valid and the auth manager exposes POST /auth/token."
+            "valid and the auth manager exposes POST /auth/token.",
+            code="AUTH_FAILED",
         ) from exc
     token = payload.get("access_token") if isinstance(payload, dict) else None
     if not token:
-        raise RuntimeError(f"JWT token response from {url} did not include 'access_token'")
+        raise AirflowToolError(
+            f"JWT token response from {url} did not include 'access_token'",
+            code="AUTH_FAILED",
+        )
     return token
 
 
@@ -93,22 +84,29 @@ class AirflowClientFactory:
 
     def __init__(self) -> None:
         self._cache: dict[str, AirflowApiBundle] = {}
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    def _instance_lock(self, instance: str) -> threading.Lock:
+        with self._locks_guard:
+            lock = self._locks.get(instance)
+            if lock is None:
+                lock = self._locks[instance] = threading.Lock()
+            return lock
+
+    def _get_instance_config(self, instance: str) -> Any:
+        reg = get_registry()
+        if instance not in reg.instances:
+            raise AirflowToolError(
+                f"Unknown instance '{instance}'",
+                code="NOT_FOUND",
+                context={"instance": instance},
+            )
+        return reg.instances[instance]
 
     def get_api_family(self, instance: str) -> str:
         """Return the API family for an instance: "v1" (Airflow 2) or "v2" (Airflow 3)."""
-        reg = get_registry()
-        if instance not in reg.instances:
-            raise ValueError(f"Unknown instance '{instance}'")
-        version = (reg.instances[instance].api_version or "v1").strip().lower()
-        return "v2" if version.startswith("v2") else "v1"
-
-    def _build_base_url(self, host: str, api_version: str) -> str:
-        host_stripped = host.rstrip("/")
-        if (api_version or "v1").strip().lower().startswith("v2"):
-            # Airflow 3.x client: generated endpoint paths already include "/api/v2".
-            return host_stripped
-        # Airflow 2.x (API v1): the generated client expects base_url to include "/api/{version}".
-        return f"{host_stripped}/api/{api_version}"
+        return self._get_instance_config(instance).api_family
 
     def _set_bearer_auth(self, client_config: Any, token: str) -> None:
         """Configure bearer token on the Airflow client configuration.
@@ -137,7 +135,8 @@ class AirflowClientFactory:
 
     def _build_bundle_v1(self, inst: Any) -> AirflowApiBundle:
         Configuration, ApiClient, _ = self._import_v1_or_raise()  # noqa: N806
-        base_url = self._build_base_url(inst.host, inst.api_version)
+        # Airflow 2.x (API v1): the generated client expects base_url to include "/api/v1".
+        base_url = f"{inst.host.rstrip('/')}/api/{inst.resolved_api_version}"
 
         client_config = Configuration(host=base_url)
         if inst.auth.type == "basic":
@@ -158,10 +157,11 @@ class AirflowClientFactory:
 
     def _build_bundle_v2(self, inst: Any) -> AirflowApiBundle:
         client_mod = self._import_v3_or_raise()
-        base_url = self._build_base_url(inst.host, inst.api_version)
+        # Airflow 3.x client: generated endpoint paths already include "/api/v2".
+        base_url = inst.host.rstrip("/")
 
         client_config = client_mod.Configuration(host=base_url)
-        needs_token_refresh = False
+        token_expires_at: float | None = None
         if inst.auth.type == "bearer":
             client_config.access_token = inst.auth.token
         elif inst.auth.type == "basic":
@@ -173,7 +173,7 @@ class AirflowClientFactory:
                 verify_ssl=inst.verify_ssl,
                 timeout=_server_config.timeout_seconds,
             )
-            needs_token_refresh = True
+            token_expires_at = time.monotonic() + _server_config.token_refresh_seconds
         else:  # pragma: no cover - guarded by Pydantic discriminated union
             raise ValueError(f"Unsupported auth type: {inst.auth.type}")
         try:
@@ -183,50 +183,72 @@ class AirflowClientFactory:
         return AirflowApiBundle(
             api_client=client_mod.ApiClient(client_config),
             config=client_config,
-            needs_token_refresh=needs_token_refresh,
+            token_expires_at=token_expires_at,
         )
 
     def _import_v1_or_raise(self) -> tuple[Any, Any, Any]:
         try:
             return _import_airflow_client()
         except ImportError as exc:
-            raise RuntimeError(
+            raise AirflowToolError(
                 "This instance targets the Airflow 2 API (api_version v1) but the installed "
                 "apache-airflow-client is not the 2.x series. "
-                "Install it with: pip install 'apache-airflow-client<3'"
+                "Install it with: pip install 'apache-airflow-client<3'",
+                code="CONFIG_ERROR",
             ) from exc
 
     def _import_v3_or_raise(self) -> Any:
         client_mod = _import_airflow_client_v3()
         # The 3.x codegen exports API classes at the top level; the 2.x codegen does not.
         if not hasattr(client_mod, "DAGApi"):
-            raise RuntimeError(
+            raise AirflowToolError(
                 "This instance targets the Airflow 3 API (api_version v2) but the installed "
                 "apache-airflow-client is the 2.x series. "
-                "Install it with: pip install 'apache-airflow-client>=3,<4'"
+                "Install it with: pip install 'apache-airflow-client>=3,<4'",
+                code="CONFIG_ERROR",
             )
         return client_mod
 
-    def _bundle(self, instance: str) -> AirflowApiBundle:
-        reg = get_registry()
-        if instance not in reg.instances:
-            raise ValueError(f"Unknown instance '{instance}'")
-        inst = reg.instances[instance]
+    def _refresh_jwt_in_place(self, inst: Any, bundle: AirflowApiBundle) -> None:
+        """Replace the expired JWT on a cached bundle, keeping its connection pool.
 
-        cached = self._cache.get(instance)
-        if cached is not None:
-            expired = (
-                cached.needs_token_refresh
-                and time.monotonic() - cached.created_at > _server_config.token_refresh_seconds
+        If the refresh fails, keep the old token (it may still be accepted) and retry
+        on the next call after a short backoff instead of failing this tool call.
+        """
+        try:
+            bundle.config.access_token = _fetch_jwt_token(
+                inst.host,
+                inst.auth.username,
+                inst.auth.password,
+                verify_ssl=inst.verify_ssl,
+                timeout=_server_config.timeout_seconds,
             )
-            if not expired:
-                return cached
-            logger.info("Refreshing JWT token for instance '%s'", instance)
+            bundle.token_expires_at = time.monotonic() + _server_config.token_refresh_seconds
+        except AirflowToolError as exc:
+            logger.warning("JWT refresh failed; keeping previous token: %s", exc)
+            bundle.token_expires_at = time.monotonic() + 60
 
-        family = self.get_api_family(instance)
-        bundle = self._build_bundle_v2(inst) if family == "v2" else self._build_bundle_v1(inst)
-        self._cache[instance] = bundle
-        return bundle
+    def _bundle(self, instance: str) -> AirflowApiBundle:
+        inst = self._get_instance_config(instance)
+
+        with self._instance_lock(instance):
+            cached = self._cache.get(instance)
+            if cached is not None:
+                if (
+                    cached.token_expires_at is not None
+                    and time.monotonic() > cached.token_expires_at
+                ):
+                    logger.info("Refreshing JWT token for instance '%s'", instance)
+                    self._refresh_jwt_in_place(inst, cached)
+                return cached
+
+            bundle = (
+                self._build_bundle_v2(inst)
+                if inst.api_family == "v2"
+                else self._build_bundle_v1(inst)
+            )
+            self._cache[instance] = bundle
+            return bundle
 
     def get_api_client(self, instance: str) -> Any:
         return self._bundle(instance).api_client

@@ -131,10 +131,36 @@ def reset_registry_cache() -> None:
     _registry = None
 
 
+def build_single_instance_registry(settings: AirflowServerConfig) -> InstanceRegistry:
+    """Build a one-instance registry from AIRFLOW_MCP_HOST/USERNAME/PASSWORD/TOKEN settings."""
+    auth: BasicAuthConfig | BearerAuthConfig
+    if settings.token:
+        auth = BearerAuthConfig(token=settings.token)
+    elif settings.username and settings.password:
+        auth = BasicAuthConfig(username=settings.username, password=settings.password)
+    else:
+        raise RuntimeError(
+            "AIRFLOW_MCP_HOST is set but credentials are missing: provide "
+            "AIRFLOW_MCP_USERNAME and AIRFLOW_MCP_PASSWORD (basic auth) "
+            "or AIRFLOW_MCP_TOKEN (bearer)"
+        )
+
+    key = settings.default_instance or "default"
+    instance = InstanceConfig(
+        host=settings.host,
+        api_version=settings.api_version,
+        verify_ssl=settings.verify_ssl,
+        auth=auth,
+    )
+    return InstanceRegistry(instances={key: instance}, default_instance=key)
+
+
 def get_registry() -> InstanceRegistry:
     """Load and cache the instance registry, using env-aware settings.
 
-    Reads AIRFLOW_MCP_INSTANCES_FILE and AIRFLOW_MCP_DEFAULT_INSTANCE from env or settings.
+    Configuration sources, in precedence order:
+    1. AIRFLOW_MCP_INSTANCES_FILE: YAML registry (multi-instance).
+    2. AIRFLOW_MCP_HOST (+ USERNAME/PASSWORD or TOKEN): single-instance mode, no file needed.
     """
     global _registry
     if _registry is not None:
@@ -144,10 +170,14 @@ def get_registry() -> InstanceRegistry:
     instances_file = settings.instances_file
     default_instance = settings.default_instance
 
-    if not instances_file:
+    if instances_file:
+        _registry = load_registry_from_yaml(instances_file, default_instance=default_instance)
+    elif settings.host:
+        _registry = build_single_instance_registry(settings)
+    else:
         raise RuntimeError(
-            "AIRFLOW_MCP_INSTANCES_FILE is required in Phase 1 for discovery tools and client factory"
+            "No Airflow instances configured. Either set AIRFLOW_MCP_INSTANCES_FILE to a "
+            "registry YAML (multi-instance), or set AIRFLOW_MCP_HOST with "
+            "AIRFLOW_MCP_USERNAME/AIRFLOW_MCP_PASSWORD or AIRFLOW_MCP_TOKEN (single instance)"
         )
-
-    _registry = load_registry_from_yaml(instances_file, default_instance=default_instance)
     return _registry

@@ -27,6 +27,34 @@ class AirflowServerConfig(BaseSettings):
         default=None, description="Default instance key for discovery and elicitations"
     )
 
+    # Single-instance quick configuration (alternative to instances_file).
+    # When instances_file is unset and host is provided, a one-instance registry
+    # is built from these values so no YAML file is needed.
+    host: str | None = Field(
+        default=None,
+        description="Airflow base URL for single-instance mode (e.g., https://airflow.example.com)",
+    )
+    username: str | None = Field(
+        default=None, description="Basic auth username for single-instance mode"
+    )
+    password: str | None = Field(
+        default=None, description="Basic auth password for single-instance mode"
+    )
+    token: str | None = Field(
+        default=None, description="Bearer token for single-instance mode (used over basic auth)"
+    )
+    api_version: str = Field(
+        default="v1", description="Airflow REST API version for single-instance mode"
+    )
+    verify_ssl: bool = Field(
+        default=True, description="Verify SSL certificates in single-instance mode"
+    )
+
+    read_only: bool = Field(
+        default=False,
+        description="If true, write tools (trigger, clear, pause/unpause) are not registered",
+    )
+
     enable_extended_clear_params: bool = Field(
         default=False,
         description="Enable extended clear parameters (include_subdags, include_upstream, etc.) for Airflow ≥2.6. "

@@ -285,13 +285,14 @@ Log responses include `truncated`, `auto_tailed` (logs >100MB tail automatically
 ### Docker
 
 ```bash
-docker build -t airflow-mcp .
 docker run -p 8765:8765 \
   -e AIRFLOW_MCP_HOST=https://airflow.example.com \
   -e AIRFLOW_MCP_USERNAME=admin \
   -e AIRFLOW_MCP_PASSWORD=your-password \
-  airflow-mcp
+  ghcr.io/madamak/apache-airflow-mcp-server:latest
 ```
+
+Or build locally with `docker build -t airflow-mcp .`
 
 The container serves streamable HTTP on `:8765` (`/mcp` endpoint, `/health` for probes). Mount a registry YAML for multi-instance setups.
 

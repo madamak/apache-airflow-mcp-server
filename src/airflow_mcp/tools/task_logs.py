@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from typing import Any
+
+from pydantic import ValidationError
 
 from ..client_factory import get_client_factory
 from ..errors import AirflowToolError
@@ -188,14 +191,47 @@ def _coerce_log_text(response: Any, api_family: str = "v1") -> str:
             if all(isinstance(i, str) for i in items):
                 # Airflow 3: plain list of pre-rendered log lines
                 return "\n".join(items)
-            if all(isinstance(i, dict) or hasattr(i, "event") for i in items):
-                # Airflow 3: structured log messages
-                return "\n".join(_format_structured_log_entry(i) for i in items)
+            if any(isinstance(i, dict) or hasattr(i, "event") for i in items):
+                # Airflow 3: structured log messages (possibly mixed with raw lines)
+                return "\n".join(
+                    i if isinstance(i, str) else _format_structured_log_entry(i) for i in items
+                )
         # Airflow 2: host-segmented [(host, text), ...] tuples
         return _flatten_log_segments(items)
     if content is None:
         return ""
     return str(content)
+
+
+def _parse_v2_log_payload(data: bytes | None) -> Any:
+    """Parse a raw Airflow 3 log response body into log content.
+
+    The generated 3.x client deserializes log lines into ``StructuredLogMessage``
+    models that keep only ``event`` and ``timestamp`` — ``level``, ``logger`` and
+    other structured fields are dropped before our formatting runs. The v2 path
+    therefore fetches the raw body and parses the JSON itself.
+    """
+
+    if not data:
+        return ""
+    text = data.decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        # application/x-ndjson: one JSON object per line; keep unparsable lines as-is
+        entries: list[Any] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                entries.append(json.loads(stripped))
+            except ValueError:
+                entries.append(line)
+        return entries if entries else text
+    if isinstance(payload, dict) and "content" in payload:
+        return payload["content"]
+    return payload
 
 
 def get_task_instance_logs(
@@ -287,6 +323,14 @@ def get_task_instance_logs(
             try_number=try_number_value,
         )
         api = _factory.get_task_instances_api(resolved.instance)
+        api_family = _factory.get_api_family(resolved.instance)
+        error_context = {
+            "dag_id": dag_id_value,
+            "dag_run_id": dag_run_id_value,
+            "task_id": task_id_value,
+            "try_number": try_number_value,
+            "instance": resolved.instance,
+        }
 
         def _call_log_method(name: str) -> Any:
             method = getattr(api, name, None)
@@ -295,32 +339,47 @@ def get_task_instance_logs(
             try:
                 return method(dag_id_value, dag_run_id_value, task_id_value, try_number_value)
             except ApiException as exc:
-                _raise_api_error(
-                    exc,
-                    "Unable to fetch task instance logs",
-                    context={
-                        "dag_id": dag_id_value,
-                        "dag_run_id": dag_run_id_value,
-                        "task_id": task_id_value,
-                        "try_number": try_number_value,
-                        "instance": resolved.instance,
-                    },
-                )
+                _raise_api_error(exc, "Unable to fetch task instance logs", context=error_context)
+
+        def _fetch_v2_log_content() -> Any:
+            # Fetch the raw body: the 3.x client's model deserialization strips
+            # `level`/`logger`/extras from structured log lines (see _parse_v2_log_payload).
+            try:
+                response = _call_log_method("get_log_without_preload_content")
+            except ValidationError as exc:
+                raise AirflowToolError(
+                    "Invalid parameters for task log retrieval",
+                    code="INVALID_INPUT",
+                    context=error_context,
+                ) from exc
+            status = getattr(response, "status", 200) or 200
+            data = getattr(response, "data", b"")
+            if status >= 400:
+                exc = ApiException(status=status, reason=getattr(response, "reason", None))
+                exc.body = data.decode("utf-8", errors="replace") if data else None
+                _raise_api_error(exc, "Unable to fetch task instance logs", context=error_context)
+            return _parse_v2_log_payload(data)
 
         resp: Any | None = None
-        for method_name in ("get_log", "get_log_for_attempt_number"):
+        if api_family == "v2":
             try:
-                resp = _call_log_method(method_name)
-                break
+                resp = _fetch_v2_log_content()
             except AttributeError:
-                continue
+                resp = None  # older codegen without the raw variant; fall back below
+        if resp is None:
+            for method_name in ("get_log", "get_log_for_attempt_number"):
+                try:
+                    resp = _call_log_method(method_name)
+                    break
+                except AttributeError:
+                    continue
         if resp is None:
             raise AirflowToolError(
                 "Airflow client does not support task log retrieval",
                 code="INTERNAL_ERROR",
                 context={"api": type(api).__name__},
             )
-        log_text = _coerce_log_text(resp, api_family=_factory.get_api_family(resolved.instance))
+        log_text = _coerce_log_text(resp, api_family=api_family)
         ui = build_airflow_ui_url(
             resolved.instance,
             "log",

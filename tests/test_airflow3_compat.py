@@ -7,6 +7,7 @@ names and signatures were verified against apache-airflow-client 3.2.2.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -145,12 +146,27 @@ class _TaskInstanceApi:
             rendered_fields={"bash_command": "echo hi"},
         )
 
-    def get_log(self, dag_id, dag_run_id, task_id, try_number):
-        structured = [
-            _Obj(timestamp="2026-01-01T00:00:00Z", event="task started", level="info"),
-            _Obj(timestamp="2026-01-01T00:00:01Z", event="boom", level="error"),
-        ]
-        return _Obj(content=SimpleNamespace(actual_instance=structured))
+    def get_log_without_preload_content(self, dag_id, dag_run_id, task_id, try_number):
+        # Mirrors the real 3.x codegen: returns the raw HTTP response; the JSON body
+        # carries structured fields (level, logger, ...) that the client's model
+        # deserialization would strip.
+        body = {
+            "content": [
+                {
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "event": "task started",
+                    "level": "info",
+                },
+                {
+                    "timestamp": "2026-01-01T00:00:01Z",
+                    "event": "boom",
+                    "level": "error",
+                    "logger": "airflow.task",
+                },
+            ],
+            "continuation_token": None,
+        }
+        return SimpleNamespace(status=200, reason="OK", data=json.dumps(body).encode("utf-8"))
 
     def post_clear_task_instances(self, dag_id, clear_task_instances_body=None):
         self._c.calls["post_clear_task_instances"] = {
@@ -412,10 +428,29 @@ def test_get_task_instance_logs_normalizes_structured_content(v2_instance: str):
     payload = _payload(out)
     assert "task started" in payload["log"]
     assert "boom" in payload["log"]
-    # Structured entries render one per line with timestamp + level + event
+    # Structured entries render one per line with timestamp + level + event + extras
     lines = payload["log"].splitlines()
     assert len(lines) == 2
     assert "ERROR" in lines[1]
+    assert "logger=airflow.task" in lines[1]
+
+
+def test_get_task_instance_logs_filter_level_matches_structured_level(v2_instance: str):
+    # The error line's text has no ERROR token; only the structured `level` field
+    # marks it. Filtering must still find it (regression: the client's model
+    # deserialization used to strip `level` before formatting).
+    out = airflow_tools.get_task_instance_logs(
+        instance=v2_instance,
+        dag_id="etl",
+        dag_run_id="run_1",
+        task_id="extract",
+        try_number=2,
+        filter_level="error",
+    )
+    payload = _payload(out)
+    assert payload["match_count"] == 1
+    assert "boom" in payload["log"]
+    assert "task started" not in payload["log"]
 
 
 def test_get_task_instance_uses_task_api_for_config(v2_instance: str):

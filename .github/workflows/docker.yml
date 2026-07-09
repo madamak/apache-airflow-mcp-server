@@ -11,6 +11,10 @@ on:
       - "uv.lock"
       - "src/**"
 
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   publish-image:
     runs-on: ubuntu-latest
@@ -32,10 +36,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # `latest` follows releases (metadata-action's latest=auto on semver tags);
+          # main pushes only move `edge`.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=edge,enable={{is_default_branch}}
 
       - name: Build and push

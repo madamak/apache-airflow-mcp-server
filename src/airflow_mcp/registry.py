@@ -156,8 +156,13 @@ def load_registry_from_yaml(
         try:
             instances[key] = InstanceConfig(**value)
         except ValidationError as e:
-            # surface a compact error
-            raise ValueError(f"Invalid configuration for instance '{key}': {e}") from e
+            # Compact error without input values: auth blocks carry credentials,
+            # and this message ends up in logs.
+            details = "; ".join(
+                f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+                for err in e.errors(include_input=False, include_url=False)
+            )
+            raise ValueError(f"Invalid configuration for instance '{key}': {details}") from e
 
     if not instances:
         raise ValueError("No instances configured in registry YAML")

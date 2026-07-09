@@ -235,7 +235,15 @@ class AirflowClientFactory:
             ) from exc
 
     def _import_v3_or_raise(self) -> Any:
-        client_mod = _import_airflow_client_v3()
+        try:
+            client_mod = _import_airflow_client_v3()
+        except ImportError as exc:
+            raise AirflowToolError(
+                "This instance targets the Airflow 3 API (api_version v2) but "
+                "apache-airflow-client is not importable. "
+                "Install it with: pip install 'apache-airflow-client>=3,<4'",
+                code="CONFIG_ERROR",
+            ) from exc
         # The 3.x codegen exports API classes at the top level; the 2.x codegen does not.
         if not hasattr(client_mod, "DAGApi"):
             raise AirflowToolError(

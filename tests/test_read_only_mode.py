@@ -12,10 +12,18 @@ import sys
 LIST_TOOLS_SNIPPET = """
 import asyncio
 import json
+from fastmcp import Client
+
 from airflow_mcp.server import mcp
 
-tools = asyncio.run(mcp.get_tools())
-print(json.dumps(sorted(tools.keys())))
+
+async def main():
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    print(json.dumps(sorted(t.name for t in tools)))
+
+
+asyncio.run(main())
 """
 
 WRITE_TOOLS = {

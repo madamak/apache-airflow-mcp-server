@@ -7,7 +7,9 @@ names and signatures were verified against apache-airflow-client 3.2.2.
 
 from __future__ import annotations
 
+import base64
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -297,6 +299,84 @@ def test_basic_auth_exchanges_credentials_for_jwt(monkeypatch: pytest.MonkeyPatc
     finally:
         factory._cache.clear()
         reset_registry_cache()
+
+
+def _make_jwt(exp_epoch: float) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"HS256"}').rstrip(b"=").decode()
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"exp": exp_epoch}).encode()).rstrip(b"=").decode()
+    )
+    return f"{header}.{payload}.signature"
+
+
+def test_token_refresh_deadline_honors_jwt_exp():
+    # exp in 5 minutes: refresh must be scheduled before it, not at the 3600s default
+    short_lived = _make_jwt(time.time() + 300)
+    deadline = cf._token_refresh_deadline(short_lived)
+    assert deadline - time.monotonic() <= 300 - cf._TOKEN_REFRESH_MARGIN_SECONDS + 1
+    # opaque (non-JWT) token: fall back to the configured interval
+    opaque = cf._token_refresh_deadline("not-a-jwt")
+    assert opaque - time.monotonic() > 300
+
+
+@pytest.fixture()
+def v2_basic_factory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    yaml_text = (
+        "af3-basic:\n"
+        "  host: https://airflow3.example.com\n"
+        "  api_version: v2\n"
+        "  auth:\n"
+        "    type: basic\n"
+        "    username: admin\n"
+        "    password: secret\n"
+    )
+    p = tmp_path / "instances.yaml"
+    p.write_text(yaml_text, encoding="utf-8")
+    monkeypatch.setenv("AIRFLOW_MCP_INSTANCES_FILE", str(p))
+    reset_registry_cache()
+    monkeypatch.setattr(cf, "_import_airflow_client_v3", lambda: _FAKE_V3_MODULE)
+    monkeypatch.setattr(cf, "_fetch_jwt_token", lambda *a, **k: "initial-jwt")
+    factory = cf.get_client_factory()
+    factory._cache.clear()
+    yield factory
+    factory._cache.clear()
+    reset_registry_cache()
+
+
+def test_jwt_refresh_credential_rejection_fails_fast(
+    v2_basic_factory, monkeypatch: pytest.MonkeyPatch
+):
+    factory = v2_basic_factory
+    factory.get_api_client("af3-basic")
+    bundle = factory._cache["af3-basic"]
+    bundle.token_expires_at = time.monotonic() - 1
+
+    def _rejected(*a, **k):
+        raise AirflowToolError("bad credentials", code="AUTH_FAILED", context={"status": 401})
+
+    monkeypatch.setattr(cf, "_fetch_jwt_token", _rejected)
+    with pytest.raises(AirflowToolError) as excinfo:
+        factory.get_api_client("af3-basic")
+    assert excinfo.value.code == "AUTH_FAILED"
+    # Backoff still applies so the endpoint is not hammered on every call
+    assert bundle.token_expires_at > time.monotonic()
+
+
+def test_jwt_refresh_transient_failure_keeps_previous_token(
+    v2_basic_factory, monkeypatch: pytest.MonkeyPatch
+):
+    factory = v2_basic_factory
+    factory.get_api_client("af3-basic")
+    bundle = factory._cache["af3-basic"]
+    bundle.token_expires_at = time.monotonic() - 1
+
+    def _unreachable(*a, **k):
+        raise AirflowToolError("connection refused", code="AUTH_FAILED")
+
+    monkeypatch.setattr(cf, "_fetch_jwt_token", _unreachable)
+    client = factory.get_api_client("af3-basic")
+    assert client.configuration.access_token == "initial-jwt"
+    assert bundle.token_expires_at > time.monotonic()
 
 
 def test_trigger_dag_uses_v2_endpoint(v2_instance: str):

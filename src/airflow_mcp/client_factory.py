@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import ssl
 import threading
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
@@ -64,11 +66,15 @@ def _fetch_jwt_token(
         with urllib.request.urlopen(request, timeout=timeout, context=ssl_context) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
+        context: dict[str, Any] = {}
+        if isinstance(exc, urllib.error.HTTPError):
+            context["status"] = exc.code
         raise AirflowToolError(
             f"Failed to obtain JWT token from {url}: {exc}. "
             "Airflow 3 (api_version v2) authenticates with JWT; ensure the credentials are "
             "valid and the auth manager exposes POST /auth/token.",
             code="AUTH_FAILED",
+            context=context or None,
         ) from exc
     token = payload.get("access_token") if isinstance(payload, dict) else None
     if not token:
@@ -77,6 +83,37 @@ def _fetch_jwt_token(
             code="AUTH_FAILED",
         )
     return token
+
+
+_TOKEN_REFRESH_MARGIN_SECONDS = 60
+_TOKEN_REFRESH_MIN_SECONDS = 30
+
+
+def _jwt_expiry_epoch(token: str) -> float | None:
+    """Best-effort read of a JWT's ``exp`` claim (no signature verification)."""
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = claims.get("exp")
+        return float(exp) if exp is not None else None
+    except Exception:
+        return None
+
+
+def _token_refresh_deadline(token: str) -> float:
+    """Monotonic deadline for refreshing ``token``.
+
+    The configured refresh interval is an upper bound; when the JWT carries an
+    ``exp`` claim, refresh a margin before it so a shorter server-side lifetime
+    ([api_auth] jwt_expiration_time) cannot outlive our schedule.
+    """
+    deadline = time.monotonic() + _server_config.token_refresh_seconds
+    exp = _jwt_expiry_epoch(token)
+    if exp is not None:
+        remaining = exp - time.time() - _TOKEN_REFRESH_MARGIN_SECONDS
+        deadline = min(deadline, time.monotonic() + max(remaining, _TOKEN_REFRESH_MIN_SECONDS))
+    return deadline
 
 
 class AirflowClientFactory:
@@ -173,7 +210,7 @@ class AirflowClientFactory:
                 verify_ssl=inst.verify_ssl,
                 timeout=_server_config.timeout_seconds,
             )
-            token_expires_at = time.monotonic() + _server_config.token_refresh_seconds
+            token_expires_at = _token_refresh_deadline(client_config.access_token)
         else:  # pragma: no cover - guarded by Pydantic discriminated union
             raise ValueError(f"Unsupported auth type: {inst.auth.type}")
         try:
@@ -212,8 +249,10 @@ class AirflowClientFactory:
     def _refresh_jwt_in_place(self, inst: Any, bundle: AirflowApiBundle) -> None:
         """Replace the expired JWT on a cached bundle, keeping its connection pool.
 
-        If the refresh fails, keep the old token (it may still be accepted) and retry
-        on the next call after a short backoff instead of failing this tool call.
+        A transient refresh failure keeps the old token (it may still be accepted)
+        and retries on the next call after a short backoff. A credential rejection
+        (401/403 from the token endpoint) fails the tool call instead: silently
+        re-posting bad credentials risks account lockout and hides the root cause.
         """
         try:
             bundle.config.access_token = _fetch_jwt_token(
@@ -223,10 +262,12 @@ class AirflowClientFactory:
                 verify_ssl=inst.verify_ssl,
                 timeout=_server_config.timeout_seconds,
             )
-            bundle.token_expires_at = time.monotonic() + _server_config.token_refresh_seconds
+            bundle.token_expires_at = _token_refresh_deadline(bundle.config.access_token)
         except AirflowToolError as exc:
-            logger.warning("JWT refresh failed; keeping previous token: %s", exc)
             bundle.token_expires_at = time.monotonic() + 60
+            if exc.context.get("status") in (401, 403):
+                raise
+            logger.warning("JWT refresh failed; keeping previous token: %s", exc)
 
     def _bundle(self, instance: str) -> AirflowApiBundle:
         inst = self._get_instance_config(instance)

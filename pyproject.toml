@@ -30,7 +30,7 @@ dependencies = [
     # 2.x client for Airflow 2 (API v1); 3.x client for Airflow 3 (API v2).
     # Pin the major matching your Airflow: pip install 'apache-airflow-client<3' for Airflow 2.
     "apache-airflow-client>=2.7.0,<4.0.0",
-    "fastmcp>=2.13.0.2",
+    "fastmcp>=2.13.0.2,<3.0.0",
     "pydantic>=2.7,<3.0",
     "pydantic-settings>=2.3,<3.0",
     "pyyaml>=6.0,<7.0",

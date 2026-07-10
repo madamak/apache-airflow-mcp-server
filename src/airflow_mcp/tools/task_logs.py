@@ -246,7 +246,7 @@ def get_task_instance_logs(
     context_lines: int | None = None,
     tail_lines: int | None = None,
     max_bytes: int = 100_000,
-) -> str:
+) -> dict[str, Any]:
     """Fetch task instance logs for a given attempt with optional filtering.
 
     Parameters

@@ -9,7 +9,7 @@ from ..url_utils import parse_airflow_ui_url
 from ..validation import validate_instance_key
 
 
-def list_instances() -> str:
+def list_instances() -> dict[str, Any]:
     """List configured Airflow instances and default.
 
     Returns
@@ -24,7 +24,7 @@ def list_instances() -> str:
         return op.success(payload)
 
 
-def describe_instance(instance: str) -> str:
+def describe_instance(instance: str) -> dict[str, Any]:
     """Describe a configured instance (no secrets).
 
     Parameters
@@ -53,7 +53,7 @@ def describe_instance(instance: str) -> str:
         return op.success(payload)
 
 
-def resolve_url(url: str) -> str:
+def resolve_url(url: str) -> dict[str, Any]:
     """Resolve an Airflow UI URL to identifiers and instance.
 
     Parameters

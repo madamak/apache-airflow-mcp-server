@@ -122,7 +122,7 @@ def list_task_instances(
     offset: int | float | str = 0,
     state: Sequence[str] | str | None = None,
     task_ids: Sequence[str] | str | None = None,
-) -> str:
+) -> dict[str, Any]:
     """List task instances for a given DAG run.
 
     Parameters
@@ -430,7 +430,7 @@ def get_task_instance(
     task_id: str | None = None,
     include_rendered: bool = False,
     max_rendered_bytes: int | float | str = 100_000,
-) -> str:
+) -> dict[str, Any]:
     """Return task instance metadata, task config, attempt summary, optional rendered fields."""
 
     with operation_logger(
@@ -631,7 +631,7 @@ def clear_task_instances(
     include_past: bool | None = None,
     dry_run: bool | None = None,
     reset_dag_runs: bool | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Clear task instances with optional filters."""
     with operation_logger(
         "airflow_clear_task_instances",

@@ -410,7 +410,7 @@ def airflow_trigger_dag(
     logical_date: str | None = None,
     conf: dict | str | None = None,
     note: str | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Trigger a DAG run with optional configuration.
 
     Parameters

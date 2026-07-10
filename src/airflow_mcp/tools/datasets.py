@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from ..client_factory import get_client_factory
 from ..errors import AirflowToolError
 from ..observability import operation_logger
@@ -16,7 +18,7 @@ def dataset_events(
     ui_url: str | None = None,
     dataset_uri: str | None = None,
     limit: int | float | str = 50,
-) -> str:
+) -> dict[str, Any]:
     """List dataset events.
 
     Parameters

@@ -1,4 +1,4 @@
-"""Airflow MCP Server using FastMCP v2 (Phase 1 with discovery tools)."""
+"""Airflow MCP Server built on FastMCP (v3)."""
 
 import logging
 import sys

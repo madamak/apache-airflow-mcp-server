@@ -538,6 +538,77 @@ def test_list_task_instances_scan_ceiling_raises_result_incomplete(
     assert exc.value.context["scan_ceiling"] == 300
 
 
+def test_list_task_instances_scan_exact_ceiling_boundary_is_complete(
+    v2_instance: str, monkeypatch: pytest.MonkeyPatch
+):
+    from airflow_mcp.tools import tasks as tasks_mod
+
+    # Run size == scan ceiling, on an exact page boundary: the reported total
+    # marks the scan as exhausted, so this must succeed, not RESULT_INCOMPLETE.
+    total = 300
+    rows = [_Obj(task_id=f"t{i}", state="success", try_number=1) for i in range(total - 1)]
+    rows.append(_Obj(task_id="last", state="failed", try_number=1))
+
+    def paged(self, dag_id, dag_run_id, limit=100, offset=0):
+        return _Obj(task_instances=rows[offset : offset + limit], total_entries=total)
+
+    monkeypatch.setattr(_TaskInstanceApi, "get_task_instances", paged)
+    monkeypatch.setattr(tasks_mod, "_MAX_FILTER_SCAN_ROWS", 300)
+    payload = _payload(
+        airflow_tools.list_task_instances(
+            instance=v2_instance, dag_id="etl", dag_run_id="run_1", state=["failed"]
+        )
+    )
+    assert payload["count"] == 1
+    assert payload["task_instances"][0]["task_id"] == "last"
+
+
+def test_list_task_instances_scan_survives_server_capped_pages(
+    v2_instance: str, monkeypatch: pytest.MonkeyPatch
+):
+    # Server caps every page below the requested limit (maximum_page_limit):
+    # a short page must not be read as exhaustion while total_entries says more.
+    rows = [_Obj(task_id=f"t{i}", state="success", try_number=1) for i in range(15)]
+    rows.append(_Obj(task_id="needle", state="failed", try_number=1))
+
+    def capped(self, dag_id, dag_run_id, limit=100, offset=0):
+        return _Obj(task_instances=rows[offset : offset + min(limit, 10)], total_entries=len(rows))
+
+    monkeypatch.setattr(_TaskInstanceApi, "get_task_instances", capped)
+    payload = _payload(
+        airflow_tools.list_task_instances(
+            instance=v2_instance, dag_id="etl", dag_run_id="run_1", state=["failed"]
+        )
+    )
+    assert payload["count"] == 1
+    assert payload["task_instances"][0]["task_id"] == "needle"
+
+
+def test_list_task_instances_per_task_pagination_survives_server_capped_pages(
+    v2_instance: str, monkeypatch: pytest.MonkeyPatch
+):
+    # Mapped task with 12 instances; server caps pages at 5. Per-task paging
+    # must follow total_entries and return every mapped instance.
+    rows = [_Obj(task_id="mapped", state="success", try_number=1) for _ in range(12)]
+    rows.append(_Obj(task_id="other", state="success", try_number=1))
+
+    def capped(self, dag_id, dag_run_id, limit=100, offset=0, state=None, task_id=None):
+        matching = [r for r in rows if task_id is None or r.task_id == task_id]
+        return _Obj(
+            task_instances=matching[offset : offset + min(limit, 5)],
+            total_entries=len(matching),
+        )
+
+    monkeypatch.setattr(_TaskInstanceApi, "get_task_instances", capped)
+    payload = _payload(
+        airflow_tools.list_task_instances(
+            instance=v2_instance, dag_id="etl", dag_run_id="run_1", task_ids=["mapped", "other"]
+        )
+    )
+    assert payload["count"] == 13
+    assert payload["total_entries"] == 13
+
+
 def test_dataset_events_asset_lookup_includes_inactive_assets(v2_instance: str):
     airflow_tools.dataset_events(instance=v2_instance, dataset_uri="s3://bucket/data")
     client = cf.get_client_factory().get_api_client(v2_instance)

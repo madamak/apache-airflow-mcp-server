@@ -344,6 +344,20 @@ def list_task_instances(
             scanned = 0
             matches: list[dict[str, Any]] = []
 
+            def _page_exhausted(page: Any, rows_count: int, next_offset: int) -> bool:
+                """True when paging can stop.
+
+                A short page is ambiguous — servers may cap page sizes below the
+                requested limit — so trust the reported total when present. An
+                empty page always ends paging (guards against overstated totals).
+                """
+                if rows_count == 0:
+                    return True
+                total = _coerce_int(getattr(page, "total_entries", None))
+                if total is not None:
+                    return next_offset >= total
+                return False
+
             if task_id_filters and len(task_id_filters) > 1 and task_id_param_name == "task_id":
                 # Airflow 3 exposes a single-value `task_id` filter: query each
                 # requested task server-side instead of scanning the whole run.
@@ -365,7 +379,7 @@ def list_task_instances(
                                 matches.append(row)
                         scanned += len(rows)
                         task_offset += len(rows)
-                        if len(rows) < page_size:
+                        if _page_exhausted(page, len(rows), task_offset):
                             break
                 # The filtered total is fully known here (exhaustive per-task fetch).
                 total_entries = len(matches)
@@ -380,7 +394,7 @@ def list_task_instances(
                         if row is not None:
                             matches.append(row)
                     scanned += len(rows)
-                    if len(rows) < page_size:
+                    if _page_exhausted(page, len(rows), scanned):
                         break
                     if len(matches) >= wanted:
                         break

@@ -28,7 +28,7 @@ def list_dag_runs(
     state: list[str] | None = None,
     order_by: Literal["start_date", "end_date", "execution_date", "logical_date"] | None = None,
     descending: bool = True,
-) -> str:
+) -> dict[str, Any]:
     """List DAG runs for a DAG with per-run UI URLs.
 
     Parameters
@@ -152,7 +152,7 @@ def get_dag_run(
     ui_url: str | None = None,
     dag_id: str | None = None,
     dag_run_id: str | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Get a DAG run and a UI URL.
 
     Parameters
@@ -213,7 +213,7 @@ def clear_dag_run(
     include_downstream: bool | None = None,
     dry_run: bool | None = None,
     reset_dag_runs: bool | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Clear all task instances within a DAG run."""
     with operation_logger(
         "airflow_clear_dag_run",

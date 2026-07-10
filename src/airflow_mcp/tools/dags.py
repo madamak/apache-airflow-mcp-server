@@ -26,7 +26,7 @@ def list_dags(
     ui_url: str | None = None,
     limit: int | float | str = 100,
     offset: int | float | str = 0,
-) -> str:
+) -> dict[str, Any]:
     """List DAGs with basic metadata and UI URL.
 
     Parameters
@@ -68,7 +68,7 @@ def list_dags(
 
 def get_dag(
     instance: str | None = None, ui_url: str | None = None, dag_id: str | None = None
-) -> str:
+) -> dict[str, Any]:
     """Get DAG details and UI URL.
 
     Parameters
@@ -107,7 +107,7 @@ def trigger_dag(
     logical_date: str | None = None,
     conf: dict[str, Any] | str | None = None,
     note: str | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Trigger a DAG run with optional configuration.
 
     Parameters
@@ -204,10 +204,10 @@ def _set_dag_paused(
     ui_url: str | None = None,
     dag_id: str | None = None,
     op_logger: OperationLogger | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Shared implementation for ``pause_dag`` and ``unpause_dag``."""
 
-    def _execute(op: OperationLogger) -> str:
+    def _execute(op: OperationLogger) -> dict[str, Any]:
         resolved = resolve_and_validate(ui_url=ui_url, instance=instance)
         dag_id_value = validate_dag_id(dag_id or resolved.dag_id)
         if not dag_id_value:
@@ -255,13 +255,13 @@ def _set_dag_paused(
 
 def pause_dag(
     instance: str | None = None, ui_url: str | None = None, dag_id: str | None = None
-) -> str:
+) -> dict[str, Any]:
     """Pause DAG scheduling."""
     return _set_dag_paused(desired_state=True, instance=instance, ui_url=ui_url, dag_id=dag_id)
 
 
 def unpause_dag(
     instance: str | None = None, ui_url: str | None = None, dag_id: str | None = None
-) -> str:
+) -> dict[str, Any]:
     """Unpause DAG scheduling."""
     return _set_dag_paused(desired_state=False, instance=instance, ui_url=ui_url, dag_id=dag_id)

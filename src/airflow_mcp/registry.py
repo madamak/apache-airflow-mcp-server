@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from .config import AirflowServerConfig
 from .errors import AirflowToolError
+from .validation import validate_instance_key
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
@@ -202,6 +203,13 @@ def build_single_instance_registry(settings: AirflowServerConfig) -> InstanceReg
         )
 
     key = settings.default_instance or "default"
+    try:
+        validate_instance_key(key)
+    except AirflowToolError as exc:
+        raise AirflowToolError(
+            f"Invalid AIRFLOW_MCP_DEFAULT_INSTANCE value used as instance key: {key!r}",
+            code="CONFIG_ERROR",
+        ) from exc
     try:
         instance = InstanceConfig(
             host=settings.host,

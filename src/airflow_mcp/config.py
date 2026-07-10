@@ -17,6 +17,7 @@ class AirflowServerConfig(BaseSettings):
 
     token_refresh_seconds: int = Field(
         default=3600,
+        gt=0,
         description="Airflow 3 only: refresh the JWT obtained from basic credentials "
         "after this many seconds",
     )

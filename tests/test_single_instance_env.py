@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from test_tools_readonly import _payload
 
 from airflow_mcp import tools as airflow_tools
@@ -25,6 +26,10 @@ def _fresh_registry(monkeypatch: pytest.MonkeyPatch):
         "AIRFLOW_MCP_USERNAME",
         "AIRFLOW_MCP_PASSWORD",
         "AIRFLOW_MCP_TOKEN",
+        "AIRFLOW_MCP_API_VERSION",
+        "AIRFLOW_MCP_VERIFY_SSL",
+        "AIRFLOW_MCP_READ_ONLY",
+        "AIRFLOW_MCP_TOKEN_REFRESH_SECONDS",
     ):
         monkeypatch.delenv(var, raising=False)
     reset_registry_cache()
@@ -47,6 +52,25 @@ def test_build_single_instance_basic_auth():
     # api_version defaults to whichever matches the installed apache-airflow-client
     assert inst.resolved_api_version == default_api_version()
     assert inst.verify_ssl is True
+
+
+def test_build_single_instance_rejects_invalid_instance_key():
+    settings = AirflowServerConfig(
+        host="https://airflow.example.com",
+        username="admin",
+        password="secret",
+        default_instance="bad key!",
+    )
+    with pytest.raises(AirflowToolError) as exc:
+        build_single_instance_registry(settings)
+    assert exc.value.code == "CONFIG_ERROR"
+    assert "bad key!" in str(exc.value)
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_non_positive_token_refresh_seconds_rejected(value: int):
+    with pytest.raises(ValidationError):
+        AirflowServerConfig(token_refresh_seconds=value)
 
 
 def test_build_single_instance_bearer_token_takes_precedence():

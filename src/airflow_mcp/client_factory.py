@@ -111,8 +111,14 @@ def _token_refresh_deadline(token: str) -> float:
     deadline = time.monotonic() + _server_config.token_refresh_seconds
     exp = _jwt_expiry_epoch(token)
     if exp is not None:
-        remaining = exp - time.time() - _TOKEN_REFRESH_MARGIN_SECONDS
-        deadline = min(deadline, time.monotonic() + max(remaining, _TOKEN_REFRESH_MIN_SECONDS))
+        lifetime = exp - time.time()
+        refresh_in = lifetime - _TOKEN_REFRESH_MARGIN_SECONDS
+        if refresh_in < _TOKEN_REFRESH_MIN_SECONDS:
+            # Short-lived token: the fixed margin would schedule the refresh at or
+            # past expiry. Refresh at half the remaining lifetime instead, with a
+            # 1s floor so a bogus/expired exp cannot cause a hot refresh loop.
+            refresh_in = max(lifetime / 2, 1.0)
+        deadline = min(deadline, time.monotonic() + refresh_in)
     return deadline
 
 

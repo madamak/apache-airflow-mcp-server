@@ -233,14 +233,23 @@ def list_task_instances(
             "instance": resolved.instance,
         }
 
-        def _fetch_page(page_limit: int, page_offset: int) -> Any:
+        def _fetch_page(page_limit: int, page_offset: int, **extra: Any) -> Any:
             nonlocal state_forwarded, task_filter_forwarded
-            page_kwargs = {"limit": page_limit, "offset": page_offset, **filter_kwargs}
+            page_kwargs = {"limit": page_limit, "offset": page_offset, **filter_kwargs, **extra}
             try:
                 return method(dag_id_value, dag_run_id_value, **page_kwargs)
             except ApiException as exc:
                 _raise_api_error(exc, "Unable to list task instances", context=error_context)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                if extra:
+                    # The per-task server-side filter was introspected from the
+                    # client's signature; a rejection here is a client mismatch,
+                    # not something in-memory filtering can paper over.
+                    raise AirflowToolError(
+                        "Airflow client rejected the server-side task_id filter",
+                        code="INTERNAL_ERROR",
+                        context=error_context,
+                    ) from exc
                 # Fallback: the client might not support the passed kwargs (state/task_ids)
                 # despite our best-effort introspection — older codegens raise TypeError,
                 # pydantic-validated 3.x codegens raise ValidationError (a ValueError).
@@ -254,6 +263,18 @@ def list_task_instances(
                     )
                 except ApiException as exc:
                     _raise_api_error(exc, "Unable to list task instances", context=error_context)
+
+        def _raise_scan_incomplete(found: int) -> None:
+            raise AirflowToolError(
+                f"Filtered listing incomplete: scanned {_MAX_FILTER_SCAN_ROWS} task instances "
+                "without completing the requested page. Narrow the filters or lower offset.",
+                code="RESULT_INCOMPLETE",
+                context={
+                    **error_context,
+                    "matches_found": found,
+                    "scan_ceiling": _MAX_FILTER_SCAN_ROWS,
+                },
+            )
 
         state_filter_set = set(state_filters) if state_filters else None
         task_id_filter_set = set(task_id_filters) if task_id_filters else None
@@ -308,37 +329,63 @@ def list_task_instances(
 
         task_instances: list[dict[str, Any]] = []
         total_entries: Any = None
-        scan_truncated = False
 
         resp: Any | None = None
         if not _needs_memory_scan():
             resp = _fetch_page(limit_int, offset_int)
 
         if _needs_memory_scan():
-            # Some filters cannot be pushed to the server (e.g. multiple task_ids on
-            # the Airflow 3 API, or older clients without a `state` param). Paging
+            # Some filters cannot be pushed to the server in one request. Paging
             # with the caller's limit/offset would then silently drop matches beyond
-            # the first page, so scan server pages and apply limit/offset to the
-            # *filtered* results instead.
+            # the first page, so collect the full filtered set and apply limit/offset
+            # to *it* instead. Hitting the row ceiling raises rather than returning a
+            # silently incomplete page.
             page_size = 100
             scanned = 0
-            wanted = offset_int + limit_int
             matches: list[dict[str, Any]] = []
-            while scanned < _MAX_FILTER_SCAN_ROWS:
-                page = _fetch_page(page_size, scanned)
-                rows = getattr(page, "task_instances", []) or []
-                total_entries = getattr(page, "total_entries", total_entries)
-                for ti in rows:
-                    row = _row_to_payload(ti)
-                    if row is not None:
-                        matches.append(row)
-                scanned += len(rows)
-                if len(rows) < page_size:
-                    break
-                if len(matches) >= wanted:
-                    break
+
+            if task_id_filters and len(task_id_filters) > 1 and task_id_param_name == "task_id":
+                # Airflow 3 exposes a single-value `task_id` filter: query each
+                # requested task server-side instead of scanning the whole run.
+                # Mapped tasks can span pages, so page per task until exhausted.
+                for tid in task_id_filters:
+                    task_offset = 0
+                    while True:
+                        if scanned >= _MAX_FILTER_SCAN_ROWS:
+                            _raise_scan_incomplete(len(matches))
+                        page = _fetch_page(page_size, task_offset, task_id=tid)
+                        rows = getattr(page, "task_instances", []) or []
+                        for ti in rows:
+                            # Guard against servers that ignore the task_id filter:
+                            # without this, per-task queries would double-count rows.
+                            if getattr(ti, "task_id", None) != tid:
+                                continue
+                            row = _row_to_payload(ti)
+                            if row is not None:
+                                matches.append(row)
+                        scanned += len(rows)
+                        task_offset += len(rows)
+                        if len(rows) < page_size:
+                            break
+                # The filtered total is fully known here (exhaustive per-task fetch).
+                total_entries = len(matches)
             else:
-                scan_truncated = True
+                wanted = offset_int + limit_int
+                while scanned < _MAX_FILTER_SCAN_ROWS:
+                    page = _fetch_page(page_size, scanned)
+                    rows = getattr(page, "task_instances", []) or []
+                    total_entries = getattr(page, "total_entries", total_entries)
+                    for ti in rows:
+                        row = _row_to_payload(ti)
+                        if row is not None:
+                            matches.append(row)
+                    scanned += len(rows)
+                    if len(rows) < page_size:
+                        break
+                    if len(matches) >= wanted:
+                        break
+                else:
+                    _raise_scan_incomplete(len(matches))
             task_instances = matches[offset_int : offset_int + limit_int]
         else:
             for ti in getattr(resp, "task_instances", []) or []:
@@ -358,9 +405,6 @@ def list_task_instances(
                 "state": state_filters,
                 "task_ids": task_id_filters,
             }
-        if scan_truncated:
-            # Backstop hit before the run was fully scanned: results may be incomplete.
-            payload["filter_scan_truncated"] = True
         return op.success(_json_safe(payload))
 
 

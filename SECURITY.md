@@ -21,8 +21,10 @@ Useful context when assessing this server:
 - **SSRF guard**: tools that accept an Airflow UI URL resolve its hostname
   against the configured instance registry and reject unknown hosts.
 - **Write tools** (`trigger`, `clear`, `pause`/`unpause`) are annotated with
-  MCP `destructiveHint` so clients prompt before execution, and can be removed
-  from the tool surface entirely with `AIRFLOW_MCP_READ_ONLY=true`.
+  MCP `destructiveHint`; that hint is advisory — clients that honor it prompt
+  before execution, others may not. The enforced server-side protection is
+  `AIRFLOW_MCP_READ_ONLY=true`, which removes write tools from the tool
+  surface entirely.
 - **Transport**: the HTTP transport binds to `127.0.0.1` by default and has no
   built-in authentication — put it behind an authenticating proxy before
   exposing it beyond localhost.

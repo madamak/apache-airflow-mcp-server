@@ -119,19 +119,21 @@ class _TaskInstanceApi:
         # Signature mirrors the 3.x codegen: `task_id` is a single Optional[StrictStr].
         if task_id is not None and not isinstance(task_id, str):
             raise ValueError("task_id must be a string")
-        self._c.calls["get_task_instances"] = {
+        call = {
             "dag_id": dag_id,
             "dag_run_id": dag_run_id,
             "state": state,
             "task_id": task_id,
         }
-        return _Obj(
-            task_instances=[
-                _Obj(task_id="extract", state="failed", try_number=2),
-                _Obj(task_id="load", state="success", try_number=1),
-            ],
-            total_entries=2,
-        )
+        self._c.calls["get_task_instances"] = call
+        self._c.calls.setdefault("get_task_instances_all", []).append(call)
+        rows = [
+            _Obj(task_id="extract", state="failed", try_number=2),
+            _Obj(task_id="load", state="success", try_number=1),
+        ]
+        if task_id is not None:
+            rows = [r for r in rows if r.task_id == task_id]
+        return _Obj(task_instances=rows[offset : offset + limit], total_entries=len(rows))
 
     def get_task_instance(self, dag_id, dag_run_id, task_id):
         return _Obj(
@@ -474,7 +476,7 @@ def test_list_task_instances_forwards_single_task_id_filter(v2_instance: str):
     assert client.calls["get_task_instances"]["task_id"] == "extract"
 
 
-def test_list_task_instances_multi_task_ids_filtered_client_side(v2_instance: str):
+def test_list_task_instances_multi_task_ids_queried_per_task(v2_instance: str):
     out = airflow_tools.list_task_instances(
         instance=v2_instance,
         dag_id="etl",
@@ -483,16 +485,19 @@ def test_list_task_instances_multi_task_ids_filtered_client_side(v2_instance: st
     )
     payload = _payload(out)
     assert payload["count"] == 2
+    assert {ti["task_id"] for ti in payload["task_instances"]} == {"extract", "load"}
     client = cf.get_client_factory().get_api_client(v2_instance)
-    # Multi-value filter must not be forwarded to the single-value param
-    assert client.calls["get_task_instances"]["task_id"] is None
+    # Each requested task_id is queried server-side via the single-value param
+    queried = [c["task_id"] for c in client.calls["get_task_instances_all"]]
+    assert queried == ["extract", "load"]
 
 
-def test_list_task_instances_multi_task_ids_scan_crosses_pages(
+def test_list_task_instances_multi_task_ids_finds_matches_beyond_first_page(
     v2_instance: str, monkeypatch: pytest.MonkeyPatch
 ):
-    # In-memory filtering must page through the run: a match beyond the first
-    # server page (row 151 here) must still be returned.
+    # A server that ignores the task_id filter still returns paged results;
+    # a match beyond the first server page (row 151 here) must still be found
+    # and rows must not be double-counted across the per-task queries.
     rows = [_Obj(task_id=f"task_{i:03d}", state="success", try_number=1) for i in range(150)]
     rows.append(_Obj(task_id="needle", state="failed", try_number=1))
 
@@ -510,6 +515,27 @@ def test_list_task_instances_multi_task_ids_scan_crosses_pages(
     )
     assert payload["count"] == 2
     assert {ti["task_id"] for ti in payload["task_instances"]} == {"task_000", "needle"}
+
+
+def test_list_task_instances_scan_ceiling_raises_result_incomplete(
+    v2_instance: str, monkeypatch: pytest.MonkeyPatch
+):
+    from airflow_mcp.tools import tasks as tasks_mod
+
+    # No `state`/`task_id` params: forces the generic in-memory scan for a
+    # state filter that never matches, so only the row ceiling can stop it.
+    def endless(self, dag_id, dag_run_id, limit=100, offset=0):
+        rows = [_Obj(task_id=f"t{offset + i}", state="success", try_number=1) for i in range(limit)]
+        return _Obj(task_instances=rows, total_entries=100_000)
+
+    monkeypatch.setattr(_TaskInstanceApi, "get_task_instances", endless)
+    monkeypatch.setattr(tasks_mod, "_MAX_FILTER_SCAN_ROWS", 300)
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.list_task_instances(
+            instance=v2_instance, dag_id="etl", dag_run_id="run_1", state=["failed"]
+        )
+    assert exc.value.code == "RESULT_INCOMPLETE"
+    assert exc.value.context["scan_ceiling"] == 300
 
 
 def test_dataset_events_asset_lookup_includes_inactive_assets(v2_instance: str):

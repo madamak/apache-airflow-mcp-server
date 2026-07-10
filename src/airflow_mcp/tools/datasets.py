@@ -50,9 +50,17 @@ def dataset_events(
             max_pages = 50  # backstop against a pathological pattern match
             offset = 0
             for _ in range(max_pages):
-                assets_resp = api.get_assets(
-                    uri_pattern=dataset_uri_value, limit=page_size, offset=offset
-                )
+                # only_active=False: the server default hides inactive assets, whose
+                # historical events are still queryable and expected here.
+                lookup_kwargs = {
+                    "uri_pattern": dataset_uri_value,
+                    "limit": page_size,
+                    "offset": offset,
+                }
+                try:
+                    assets_resp = api.get_assets(only_active=False, **lookup_kwargs)
+                except TypeError:
+                    assets_resp = api.get_assets(**lookup_kwargs)
                 assets = getattr(assets_resp, "assets", []) or []
                 for asset in assets:
                     if getattr(asset, "uri", None) == dataset_uri_value:

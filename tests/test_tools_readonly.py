@@ -1155,7 +1155,9 @@ def test_list_task_instances_combined_filters(monkeypatch: pytest.MonkeyPatch):
     assert payload["count"] == 1
     assert payload["task_instances"][0]["task_id"] == "t1"
     assert payload["task_instances"][0]["state"] == "FAILED"
-    assert payload["filters"]["state"] == ["Failed"]
+    # State filters normalize to lowercase (Airflow's canonical form) so they can
+    # also be pushed server-side; the echo reflects what was actually applied.
+    assert payload["filters"]["state"] == ["failed"]
     assert payload["filters"]["task_ids"] == ["t1"]
 
 

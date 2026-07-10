@@ -27,6 +27,10 @@ from ._common import (
 
 _factory = get_client_factory()
 
+# Backstop for in-memory filter scans: stop paging after this many rows so a
+# pathological run cannot turn one tool call into unbounded API traffic.
+_MAX_FILTER_SCAN_ROWS = 10_000
+
 
 def _normalize_state_filters(state: Sequence[str] | str | None) -> list[str] | None:
     """Normalize state filters to a deduplicated, non-empty list of strings."""
@@ -52,7 +56,9 @@ def _normalize_state_filters(state: Sequence[str] | str | None) -> list[str] | N
                 code="INVALID_INPUT",
                 context={"field": "state", "value": item},
             )
-        text = item.strip()
+        # Airflow states are canonically lowercase; normalize so the filter can
+        # also be pushed server-side (the API matches exact values).
+        text = item.strip().lower()
         if not text:
             raise AirflowToolError(
                 "state filters cannot be empty",
@@ -178,7 +184,6 @@ def list_task_instances(
 
         api = _factory.get_task_instances_api(resolved.instance)
         method = api.get_task_instances
-        kwargs: dict[str, Any] = {"limit": limit_int, "offset": offset_int}
 
         # Airflow client versions diverge here: older releases omit kwonly
         # filters such as ``state`` / ``task_ids`` entirely, while newer ones
@@ -206,54 +211,55 @@ def list_task_instances(
         else:  # pragma: no cover - best-effort default
             supports_state = True
 
+        filter_kwargs: dict[str, Any] = {}
+        state_forwarded = False
+        task_filter_forwarded = False
         if state_filters and supports_state:
-            kwargs["state"] = state_filters
+            filter_kwargs["state"] = state_filters
+            state_forwarded = True
         if task_id_filters and task_id_param_name:
             if task_id_param_name == "task_id":
                 # Airflow 3 client exposes a single-value `task_id` filter (strict str).
-                # Forward it only for a single filter; multi-value filtering happens
-                # in memory below either way.
                 if len(task_id_filters) == 1:
-                    kwargs["task_id"] = task_id_filters[0]
+                    filter_kwargs["task_id"] = task_id_filters[0]
+                    task_filter_forwarded = True
             else:
-                kwargs[task_id_param_name] = task_id_filters
+                filter_kwargs[task_id_param_name] = task_id_filters
+                task_filter_forwarded = True
 
-        try:
-            resp = method(dag_id_value, dag_run_id_value, **kwargs)
-        except ApiException as exc:
-            _raise_api_error(
-                exc,
-                "Unable to list task instances",
-                context={
-                    "dag_id": dag_id_value,
-                    "dag_run_id": dag_run_id_value,
-                    "instance": resolved.instance,
-                },
-            )
-        except (TypeError, ValueError):
-            # Fallback: the client might not support the passed kwargs (state/task_ids)
-            # despite our best-effort introspection — older codegens raise TypeError,
-            # pydantic-validated 3.x codegens raise ValidationError (a ValueError).
-            # Retry without filters and rely on the in-memory filtering below.
-            safe_kwargs = {"limit": limit_int, "offset": offset_int}
+        error_context = {
+            "dag_id": dag_id_value,
+            "dag_run_id": dag_run_id_value,
+            "instance": resolved.instance,
+        }
+
+        def _fetch_page(page_limit: int, page_offset: int) -> Any:
+            nonlocal state_forwarded, task_filter_forwarded
+            page_kwargs = {"limit": page_limit, "offset": page_offset, **filter_kwargs}
             try:
-                resp = method(dag_id_value, dag_run_id_value, **safe_kwargs)
+                return method(dag_id_value, dag_run_id_value, **page_kwargs)
             except ApiException as exc:
-                _raise_api_error(
-                    exc,
-                    "Unable to list task instances",
-                    context={
-                        "dag_id": dag_id_value,
-                        "dag_run_id": dag_run_id_value,
-                        "instance": resolved.instance,
-                    },
-                )
+                _raise_api_error(exc, "Unable to list task instances", context=error_context)
+            except (TypeError, ValueError):
+                # Fallback: the client might not support the passed kwargs (state/task_ids)
+                # despite our best-effort introspection — older codegens raise TypeError,
+                # pydantic-validated 3.x codegens raise ValidationError (a ValueError).
+                # Retry without filters and rely on in-memory filtering instead.
+                filter_kwargs.clear()
+                state_forwarded = False
+                task_filter_forwarded = False
+                try:
+                    return method(
+                        dag_id_value, dag_run_id_value, limit=page_limit, offset=page_offset
+                    )
+                except ApiException as exc:
+                    _raise_api_error(exc, "Unable to list task instances", context=error_context)
 
-        state_filter_set = {s.lower() for s in state_filters} if state_filters else None
+        state_filter_set = set(state_filters) if state_filters else None
         task_id_filter_set = set(task_id_filters) if task_id_filters else None
 
-        task_instances: list[dict[str, Any]] = []
-        for ti in getattr(resp, "task_instances", []) or []:
+        def _row_to_payload(ti: Any) -> dict[str, Any] | None:
+            """Apply in-memory filters to one task instance; None when filtered out."""
             task_id_value = getattr(ti, "task_id", None)
             # Airflow client may represent state as a string, enum, or model object.
             # Always coerce to a string for comparison and JSON output.
@@ -263,13 +269,15 @@ def list_task_instances(
             elif raw_state_value is None:
                 state_value = None
             else:
-                # Fallback: TaskState enum / model – rely on its string representation.
-                state_value = str(raw_state_value)
+                # Fallback: TaskState enum / model – prefer its raw value over str(),
+                # which for plain Enum members yields "ClassName.MEMBER".
+                value_attr = getattr(raw_state_value, "value", None)
+                state_value = value_attr if isinstance(value_attr, str) else str(raw_state_value)
 
             if state_filter_set and (state_value or "").lower() not in state_filter_set:
-                continue
+                return None
             if task_id_filter_set and task_id_value not in task_id_filter_set:
-                continue
+                return None
             try_num = getattr(ti, "try_number", None)
             ui = (
                 build_airflow_ui_url(
@@ -283,22 +291,66 @@ def list_task_instances(
                 if (task_id_value and try_num is not None)
                 else None
             )
-            task_instances.append(
-                {
-                    "task_id": task_id_value,
-                    "state": state_value,
-                    "try_number": try_num,
-                    "start_date": getattr(ti, "start_date", None),
-                    "end_date": getattr(ti, "end_date", None),
-                    "ui_url": ui,
-                }
+            return {
+                "task_id": task_id_value,
+                "state": state_value,
+                "try_number": try_num,
+                "start_date": getattr(ti, "start_date", None),
+                "end_date": getattr(ti, "end_date", None),
+                "ui_url": ui,
+            }
+
+        def _needs_memory_scan() -> bool:
+            return bool(
+                (state_filters and not state_forwarded)
+                or (task_id_filters and not task_filter_forwarded)
             )
+
+        task_instances: list[dict[str, Any]] = []
+        total_entries: Any = None
+        scan_truncated = False
+
+        resp: Any | None = None
+        if not _needs_memory_scan():
+            resp = _fetch_page(limit_int, offset_int)
+
+        if _needs_memory_scan():
+            # Some filters cannot be pushed to the server (e.g. multiple task_ids on
+            # the Airflow 3 API, or older clients without a `state` param). Paging
+            # with the caller's limit/offset would then silently drop matches beyond
+            # the first page, so scan server pages and apply limit/offset to the
+            # *filtered* results instead.
+            page_size = 100
+            scanned = 0
+            wanted = offset_int + limit_int
+            matches: list[dict[str, Any]] = []
+            while scanned < _MAX_FILTER_SCAN_ROWS:
+                page = _fetch_page(page_size, scanned)
+                rows = getattr(page, "task_instances", []) or []
+                total_entries = getattr(page, "total_entries", total_entries)
+                for ti in rows:
+                    row = _row_to_payload(ti)
+                    if row is not None:
+                        matches.append(row)
+                scanned += len(rows)
+                if len(rows) < page_size:
+                    break
+                if len(matches) >= wanted:
+                    break
+            else:
+                scan_truncated = True
+            task_instances = matches[offset_int : offset_int + limit_int]
+        else:
+            for ti in getattr(resp, "task_instances", []) or []:
+                row = _row_to_payload(ti)
+                if row is not None:
+                    task_instances.append(row)
+            total_entries = getattr(resp, "total_entries", None)
 
         payload: dict[str, Any] = {
             "task_instances": task_instances,
             "count": len(task_instances),
         }
-        total_entries = getattr(resp, "total_entries", None)
         if total_entries is not None:
             payload["total_entries"] = total_entries
         if state_filters or task_id_filters:
@@ -306,6 +358,9 @@ def list_task_instances(
                 "state": state_filters,
                 "task_ids": task_id_filters,
             }
+        if scan_truncated:
+            # Backstop hit before the run was fully scanned: results may be incomplete.
+            payload["filter_scan_truncated"] = True
         return op.success(_json_safe(payload))
 
 

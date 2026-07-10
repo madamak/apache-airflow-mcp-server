@@ -148,10 +148,13 @@ class _TaskInstanceApi:
             rendered_fields={"bash_command": "echo hi"},
         )
 
-    def get_log_without_preload_content(self, dag_id, dag_run_id, task_id, try_number):
+    def get_log_without_preload_content(
+        self, dag_id, dag_run_id, task_id, try_number, full_content=None
+    ):
         # Mirrors the real 3.x codegen: returns the raw HTTP response; the JSON body
         # carries structured fields (level, logger, ...) that the client's model
         # deserialization would strip.
+        self._c.calls["get_log_without_preload_content"] = {"full_content": full_content}
         body = {
             "content": [
                 {
@@ -190,7 +193,8 @@ class _AssetApi:
     def __init__(self, api_client) -> None:
         self._c = api_client
 
-    def get_assets(self, uri_pattern=None, limit=100, offset=0):
+    def get_assets(self, uri_pattern=None, limit=100, offset=0, only_active=None):
+        self._c.calls["get_assets"] = {"uri_pattern": uri_pattern, "only_active": only_active}
         if offset:
             return _Obj(assets=[], total_entries=1)
         return _Obj(
@@ -317,6 +321,15 @@ def test_token_refresh_deadline_honors_jwt_exp():
     # opaque (non-JWT) token: fall back to the configured interval
     opaque = cf._token_refresh_deadline("not-a-jwt")
     assert opaque - time.monotonic() > 300
+
+
+def test_token_refresh_deadline_short_lived_token_stays_before_expiry():
+    # Token lifetime (20s) is shorter than the refresh margin: the deadline must
+    # still land before exp instead of being floored past it.
+    token = _make_jwt(time.time() + 20)
+    deadline = cf._token_refresh_deadline(token)
+    remaining = deadline - time.monotonic()
+    assert 0 < remaining < 20
 
 
 @pytest.fixture()
@@ -475,6 +488,38 @@ def test_list_task_instances_multi_task_ids_filtered_client_side(v2_instance: st
     assert client.calls["get_task_instances"]["task_id"] is None
 
 
+def test_list_task_instances_multi_task_ids_scan_crosses_pages(
+    v2_instance: str, monkeypatch: pytest.MonkeyPatch
+):
+    # In-memory filtering must page through the run: a match beyond the first
+    # server page (row 151 here) must still be returned.
+    rows = [_Obj(task_id=f"task_{i:03d}", state="success", try_number=1) for i in range(150)]
+    rows.append(_Obj(task_id="needle", state="failed", try_number=1))
+
+    def paged(self, dag_id, dag_run_id, limit=100, offset=0, state=None, task_id=None):
+        return _Obj(task_instances=rows[offset : offset + limit], total_entries=len(rows))
+
+    monkeypatch.setattr(_TaskInstanceApi, "get_task_instances", paged)
+    payload = _payload(
+        airflow_tools.list_task_instances(
+            instance=v2_instance,
+            dag_id="etl",
+            dag_run_id="run_1",
+            task_ids=["task_000", "needle"],
+        )
+    )
+    assert payload["count"] == 2
+    assert {ti["task_id"] for ti in payload["task_instances"]} == {"task_000", "needle"}
+
+
+def test_dataset_events_asset_lookup_includes_inactive_assets(v2_instance: str):
+    airflow_tools.dataset_events(instance=v2_instance, dataset_uri="s3://bucket/data")
+    client = cf.get_client_factory().get_api_client(v2_instance)
+    # Inactive assets keep their historical events; the lookup must not use the
+    # server's only-active default.
+    assert client.calls["get_assets"]["only_active"] is False
+
+
 def test_trigger_body_always_includes_logical_date(v2_instance: str):
     airflow_tools.trigger_dag(instance=v2_instance, dag_id="etl")
     client = cf.get_client_factory().get_api_client(v2_instance)
@@ -513,6 +558,10 @@ def test_get_task_instance_logs_normalizes_structured_content(v2_instance: str):
     assert len(lines) == 2
     assert "ERROR" in lines[1]
     assert "logger=airflow.task" in lines[1]
+    # The whole log must be requested up front: without full_content the API
+    # returns only the first chunk plus a continuation token we don't follow.
+    client = cf.get_client_factory().get_api_client(v2_instance)
+    assert client.calls["get_log_without_preload_content"]["full_content"] is True
 
 
 def test_get_task_instance_logs_filter_level_matches_structured_level(v2_instance: str):

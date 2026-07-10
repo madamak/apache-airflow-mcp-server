@@ -336,8 +336,15 @@ def get_task_instance_logs(
             method = getattr(api, name, None)
             if method is None:
                 raise AttributeError(name)
+            args = (dag_id_value, dag_run_id_value, task_id_value, try_number_value)
             try:
-                return method(dag_id_value, dag_run_id_value, task_id_value, try_number_value)
+                try:
+                    # Without full_content the endpoint returns only the first log
+                    # chunk plus a continuation token; request the whole log instead
+                    # of silently dropping the remainder.
+                    return method(*args, full_content=True)
+                except TypeError:
+                    return method(*args)
             except ApiException as exc:
                 _raise_api_error(exc, "Unable to fetch task instance logs", context=error_context)
 

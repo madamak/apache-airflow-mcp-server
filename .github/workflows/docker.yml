@@ -43,6 +43,14 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=edge,enable={{is_default_branch}}
 
+      # .git is excluded from the Docker build context, so hatch-vcs cannot
+      # derive the version there; compute it from the release tag instead.
+      - name: Compute package version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -50,3 +58,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ env.PKG_VERSION || '0.0.0' }}

@@ -10,13 +10,13 @@
 
 Connect Claude, Cursor, and any [MCP](https://modelcontextprotocol.io) client to your Apache Airflow deployments — and let AI agents debug failed DAGs for you.
 
-Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this fail?"* — the agent resolves the URL, finds the failed tasks, pulls the error lines from the logs (server-side filtered so it doesn't blow the context window), and can re-trigger or clear runs **only with your approval**.
+Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this fail?"* — the agent resolves the URL, finds the failed tasks, pulls the error lines from the logs (server-side filtered so it doesn't blow the context window), and can re-trigger or clear runs — write tools carry destructive-operation annotations, so MCP clients that honor them (Claude Code and Claude Desktop do) ask for your approval first.
 
 ## Highlights
 
 - 🔍 **Incident-response first** — resolve Airflow UI URLs straight to the failing task, filter logs by error level with context lines, follow `try_number` semantics correctly (sensors included)
 - 🏢 **Multi-instance** — one server for dev/staging/prod across teams, with per-instance credentials and an SSRF guard that rejects unknown hosts
-- 🔒 **Safe by default** — read-only mode (`AIRFLOW_MCP_READ_ONLY=true`), write tools annotated as destructive so clients prompt for confirmation, secrets never logged or echoed
+- 🔒 **Safety controls** — opt-in read-only mode (`AIRFLOW_MCP_READ_ONLY=true`) that never registers write tools; write tools annotated as destructive so clients that honor annotations prompt for confirmation; secrets never logged or echoed
 - 📉 **Token-efficient** — log tailing, level filtering, byte caps, and truncation metadata designed for LLM context windows
 - 🧭 **Airflow 2 and 3** — Airflow 2.5–2.11 (API v1) fully supported; Airflow 3 (API v2) supported experimentally, including JWT auth
 - 📎 **Traceable** — every response carries a `request_id` that matches the structured server logs
@@ -239,7 +239,7 @@ Pointing an AI agent at production? Set `AIRFLOW_MCP_READ_ONLY=true` and the wri
 | `airflow_get_task_instance_logs` | Logs with level filtering, tailing, context lines, and byte caps |
 | `airflow_dataset_events` | Dataset (Airflow 2) / asset (Airflow 3) events |
 
-**Write** (require client approval; hidden entirely in read-only mode)
+**Write** (annotated destructive so clients can require approval; hidden entirely in read-only mode)
 
 | Tool | Description |
 |---|---|

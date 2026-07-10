@@ -5,10 +5,10 @@ Guidance for AI Agents working on the Airflow MCP Server. This file orients you 
 ## Project Layout
 
 - `src/airflow_mcp/`
-  - `server.py`: FastMCP entrypoint. Registers tools and HTTP routes. Thin wrappers only.
-  - `tools.py`: Business logic for MCP tools (structured dict outputs; FastMCP serializes). No FastMCP or web concerns.
-  - `registry.py`: Instance registry loader (YAML with `${VAR}` env substitution) and cached accessor.
-  - `client_factory.py`: Builds cached `apache-airflow-client` clients per instance; applies auth, SSL, timeouts.
+  - `server.py`: FastMCP entrypoint. Registers tools and HTTP routes. Thin wrappers only. Write tools are registered through the `write_tool` decorator, which is a no-op in read-only mode.
+  - `tools/`: Business logic for MCP tools (structured dict outputs; FastMCP serializes). No FastMCP or web concerns. One module per domain (`dags.py`, `runs.py`, `tasks.py`, `task_logs.py`, `datasets.py`, `instances.py`); shared helpers in `_common.py`.
+  - `registry.py`: Instance registry loader (YAML with `${VAR}` env substitution, or a single instance built from `AIRFLOW_MCP_HOST`/credentials env vars) and cached accessor.
+  - `client_factory.py`: Builds cached `apache-airflow-client` clients per instance; applies auth, SSL, timeouts. Handles both client majors: instances with `api_version: v1` use the 2.x codegen (`airflow_client.client.apis`), `api_version: v2` uses the 3.x codegen (top-level API classes, JWT auth via `/auth/token`). `get_api_family(instance)` is the branch point tools use for version-specific calls.
   - `url_utils.py`: URL resolver/builder (instance detection, dag/task/run extraction, UI URL construction).
   - `validation.py`: Input validation (safe identifier patterns; SSRF guard via host check in resolver).
   - `observability.py`: Structured logging with request_id; common operation logger.
@@ -48,9 +48,17 @@ Guidance for AI Agents working on the Airflow MCP Server. This file orients you 
 
 ## Configuration (env)
 
-- Required for runtime: `AIRFLOW_MCP_INSTANCES_FILE` → path to instance registry YAML.
-- Optional: `AIRFLOW_MCP_DEFAULT_INSTANCE`, `AIRFLOW_MCP_HTTP_HOST`, `AIRFLOW_MCP_HTTP_PORT`, `AIRFLOW_MCP_TIMEOUT_SECONDS`, `AIRFLOW_MCP_LOG_FILE`, `AIRFLOW_MCP_HTTP_BLOCK_GET_ON_MCP`.
+- Instance configuration, one of:
+  - `AIRFLOW_MCP_INSTANCES_FILE` → path to instance registry YAML (multi-instance; takes precedence), or
+  - `AIRFLOW_MCP_HOST` + `AIRFLOW_MCP_USERNAME`/`AIRFLOW_MCP_PASSWORD` or `AIRFLOW_MCP_TOKEN` (single instance, no file), with optional `AIRFLOW_MCP_API_VERSION` (`v1`/`v2`) and `AIRFLOW_MCP_VERIFY_SSL`.
+- Optional: `AIRFLOW_MCP_DEFAULT_INSTANCE`, `AIRFLOW_MCP_READ_ONLY`, `AIRFLOW_MCP_HTTP_HOST`, `AIRFLOW_MCP_HTTP_PORT`, `AIRFLOW_MCP_TIMEOUT_SECONDS`, `AIRFLOW_MCP_TOKEN_REFRESH_SECONDS`, `AIRFLOW_MCP_LOG_FILE`, `AIRFLOW_MCP_HTTP_BLOCK_GET_ON_MCP`.
 - Per-instance credentials are referenced within the YAML and resolved from environment (see `examples/instances.yaml`).
+
+## Airflow version support
+
+- `api_version: v1` → Airflow 2 (2.5–2.11) via `apache-airflow-client<3`. Stable.
+- `api_version: v2` → Airflow 3 via `apache-airflow-client>=3,<4`. Experimental.
+- Version-specific behavior is branched on `client_factory.get_api_family(instance)`; body models are built in `tools/_common.py` with dict fallbacks. When touching these paths, keep `tests/test_airflow3_compat.py` in sync — CI runs the suite against both client majors.
 
 ## Observability and Logging
 

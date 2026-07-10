@@ -108,7 +108,10 @@ def parse_airflow_ui_url(url: str) -> ResolvedUrl:
 
     if len(segments) >= 2 and segments[0] == "dags":
         dag_id = validate_dag_id(unquote(segments[1]))
-        if len(segments) >= 3 and segments[2] in {"grid", "graph"}:
+        if len(segments) == 2:
+            # Airflow 3 UI: /dags/{dag_id} is the DAG overview (grid)
+            route = "grid"
+        elif len(segments) >= 3 and segments[2] in {"grid", "graph"}:
             route = segments[2]
             r = q("dag_run_id")
             dag_run_id = validate_dag_run_id(r)
@@ -123,6 +126,19 @@ def parse_airflow_ui_url(url: str) -> ResolvedUrl:
                     except ValueError:
                         try_number = None
                     route = "log"
+        elif len(segments) >= 4 and segments[2] == "runs":
+            # Airflow 3 UI: /dags/{dag_id}/runs/{run_id}[/tasks/{task_id}]
+            dag_run_id = validate_dag_run_id(unquote(segments[3]))
+            route = "dag_run"
+            if len(segments) >= 6 and segments[4] == "tasks":
+                task_id = validate_task_id(unquote(segments[5]))
+                route = "task"
+                r_try = q("try_number")
+                if r_try is not None:
+                    try:
+                        try_number = int(r_try)
+                    except ValueError:
+                        try_number = None
         elif len(segments) >= 3 and segments[2] == "task":
             route = "task"
             r_task = q("task_id")
@@ -167,29 +183,50 @@ def build_airflow_ui_url(
 
     base = reg.instances[instance].host.rstrip("/")
     encoded_dag_id = _encode_segment(dag_id)
-    if route in {"grid", "graph"}:
-        dag_run_id = validate_dag_run_id(dag_run_id)
-        path = f"/dags/{encoded_dag_id}/{route}"
-        qs = _encode_query({"dag_run_id": dag_run_id})
-        return f"{base}{path}{('?' + qs) if qs else ''}"
 
-    if route == "dag_run" and dag_run_id:
-        dag_run_id = validate_dag_run_id(dag_run_id)
-        return f"{base}/dags/{encoded_dag_id}/dagRuns/{_encode_segment(dag_run_id)}"
+    url: str | None = None
+    if reg.instances[instance].api_family == "v2":
+        # Airflow 3 UI route scheme: /dags/{dag}[/runs/{run}[/tasks/{task}]]
+        if route in {"grid", "graph"} and not dag_run_id:
+            url = f"{base}/dags/{encoded_dag_id}"
+        elif route in {"grid", "graph", "dag_run"} and dag_run_id:
+            dag_run_id = validate_dag_run_id(dag_run_id)
+            url = f"{base}/dags/{encoded_dag_id}/runs/{_encode_segment(dag_run_id)}"
+        elif route in {"task", "log"} and dag_run_id and task_id:
+            if route == "log" and try_number is None:
+                url = None
+            else:
+                dag_run_id = validate_dag_run_id(dag_run_id)
+                task_id = validate_task_id(task_id)
+                url = (
+                    f"{base}/dags/{encoded_dag_id}/runs/{_encode_segment(dag_run_id)}"
+                    f"/tasks/{_encode_segment(task_id)}"
+                )
+                if route == "log":
+                    url = f"{url}?try_number={try_number}"
+    else:
+        if route in {"grid", "graph"}:
+            dag_run_id = validate_dag_run_id(dag_run_id)
+            qs = _encode_query({"dag_run_id": dag_run_id})
+            url = f"{base}/dags/{encoded_dag_id}/{route}{('?' + qs) if qs else ''}"
+        elif route == "dag_run" and dag_run_id:
+            dag_run_id = validate_dag_run_id(dag_run_id)
+            url = f"{base}/dags/{encoded_dag_id}/dagRuns/{_encode_segment(dag_run_id)}"
+        elif route == "task" and task_id:
+            dag_run_id = validate_dag_run_id(dag_run_id)
+            task_id = validate_task_id(task_id)
+            qs = _encode_query({"task_id": task_id, "dag_run_id": dag_run_id})
+            url = f"{base}/dags/{encoded_dag_id}/task{('?' + qs) if qs else ''}"
+        elif route == "log" and dag_run_id and task_id and try_number is not None:
+            dag_run_id = validate_dag_run_id(dag_run_id)
+            task_id = validate_task_id(task_id)
+            url = (
+                f"{base}/dags/{encoded_dag_id}/dagRuns/{_encode_segment(dag_run_id)}"
+                f"/taskInstances/{_encode_segment(task_id)}/logs/{try_number}"
+            )
 
-    if route == "task" and task_id:
-        dag_run_id = validate_dag_run_id(dag_run_id)
-        task_id = validate_task_id(task_id)
-        qs = _encode_query({"task_id": task_id, "dag_run_id": dag_run_id})
-        return f"{base}/dags/{encoded_dag_id}/task{('?' + qs) if qs else ''}"
-
-    if route == "log" and dag_run_id and task_id and try_number is not None:
-        dag_run_id = validate_dag_run_id(dag_run_id)
-        task_id = validate_task_id(task_id)
-        return (
-            f"{base}/dags/{encoded_dag_id}/dagRuns/{_encode_segment(dag_run_id)}"
-            f"/taskInstances/{_encode_segment(task_id)}/logs/{try_number}"
-        )
+    if url is not None:
+        return url
 
     raise AirflowToolError(
         f"Unsupported route '{route}' or missing identifiers",

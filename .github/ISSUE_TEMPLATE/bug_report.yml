@@ -1,0 +1,42 @@
+name: Bug report
+description: Something isn't working
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead? Include the tool name and (redacted) response payload if relevant — the `request_id` from the response helps correlate with server logs.
+    validations:
+      required: true
+  - type: input
+    id: airflow-version
+    attributes:
+      label: Airflow version
+      placeholder: e.g. 2.9.3 or 3.1.0
+    validations:
+      required: true
+  - type: input
+    id: client-version
+    attributes:
+      label: apache-airflow-client version
+      description: Output of `pip show apache-airflow-client`
+      placeholder: e.g. 2.10.0
+  - type: input
+    id: server-version
+    attributes:
+      label: apache-airflow-mcp-server version
+      placeholder: e.g. 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: mcp-client
+    attributes:
+      label: MCP client
+      placeholder: e.g. Claude Code, Claude Desktop, Cursor
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Server logs around the failing call (secrets are never logged, but please double-check before pasting).
+      render: text

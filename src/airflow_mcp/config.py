@@ -15,6 +15,13 @@ class AirflowServerConfig(BaseSettings):
 
     timeout_seconds: int = Field(default=30, description="Default timeout for API calls")
 
+    token_refresh_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description="Airflow 3 only: refresh the JWT obtained from basic credentials "
+        "after this many seconds",
+    )
+
     http_block_get_on_mcp: bool = Field(
         default=True,
         description="If true, block GET /mcp to avoid SSE read attempts on HTTP deployments",
@@ -25,6 +32,36 @@ class AirflowServerConfig(BaseSettings):
     )
     default_instance: str | None = Field(
         default=None, description="Default instance key for discovery and elicitations"
+    )
+
+    # Single-instance quick configuration (alternative to instances_file).
+    # When instances_file is unset and host is provided, a one-instance registry
+    # is built from these values so no YAML file is needed.
+    host: str | None = Field(
+        default=None,
+        description="Airflow base URL for single-instance mode (e.g., https://airflow.example.com)",
+    )
+    username: str | None = Field(
+        default=None, description="Basic auth username for single-instance mode"
+    )
+    password: str | None = Field(
+        default=None, description="Basic auth password for single-instance mode"
+    )
+    token: str | None = Field(
+        default=None, description="Bearer token for single-instance mode (used over basic auth)"
+    )
+    api_version: str | None = Field(
+        default=None,
+        description="Airflow REST API version for single-instance mode: 'v1' (Airflow 2) or "
+        "'v2' (Airflow 3). Defaults to whichever matches the installed apache-airflow-client",
+    )
+    verify_ssl: bool = Field(
+        default=True, description="Verify SSL certificates in single-instance mode"
+    )
+
+    read_only: bool = Field(
+        default=False,
+        description="If true, write tools (trigger, clear, pause/unpause) are not registered",
     )
 
     enable_extended_clear_params: bool = Field(

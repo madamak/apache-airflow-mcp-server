@@ -39,3 +39,14 @@ local:
 #   auth:
 #     type: bearer
 #     token: ${AIRFLOW_INSTANCE_ML_PROD_TOKEN}
+
+# Airflow 3 instance (API v2, experimental) - requires apache-airflow-client>=3.
+# Basic credentials are exchanged for a JWT via POST /auth/token automatically.
+# analytics-prod:
+#   host: https://airflow.analytics.example.com/
+#   api_version: v2
+#   verify_ssl: true
+#   auth:
+#     type: basic
+#     username: ${AIRFLOW_INSTANCE_ANALYTICS_USERNAME}
+#     password: ${AIRFLOW_INSTANCE_ANALYTICS_PASSWORD}

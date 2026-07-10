@@ -41,6 +41,17 @@ READ_ONLY_ANNOTATIONS = {"readOnlyHint": True, "destructiveHint": False, "idempo
 WRITE_TOOL_ANNOTATIONS = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False}
 
 
+def write_tool(fn):
+    """Register a write tool, unless AIRFLOW_MCP_READ_ONLY is enabled."""
+    if config.read_only:
+        return fn
+    return mcp.tool(annotations=WRITE_TOOL_ANNOTATIONS)(fn)
+
+
+if config.read_only:
+    logger.info("Read-only mode enabled (AIRFLOW_MCP_READ_ONLY): write tools are not registered")
+
+
 if config.http_block_get_on_mcp:
 
     @mcp.custom_route("/mcp", methods=["GET"])  # pragma: no cover - small wrapper
@@ -155,7 +166,7 @@ def airflow_list_dag_runs(
     limit: int | float | str = 100,
     offset: int | float | str = 0,
     state: list[str] | None = None,
-    order_by: Literal["start_date", "end_date", "execution_date"] | None = None,
+    order_by: Literal["start_date", "end_date", "execution_date", "logical_date"] | None = None,
     descending: bool = True,
 ) -> dict[str, Any]:
     """List DAG runs (defaults to execution_date DESC) with per-run UI URLs.
@@ -167,7 +178,7 @@ def airflow_list_dag_runs(
     - limit: Max results (default 100; accepts int/float/str, coerced to non-negative int, fractional values truncated)
     - offset: Offset for pagination (default 0; accepts int/float/str, coerced to non-negative int, fractional values truncated)
     - state: List of states to filter by (optional)
-    - order_by: Optional `"start_date"`, `"end_date"`, or `"execution_date"` (omit to use ``execution_date``)
+    - order_by: Optional `"start_date"`, `"end_date"`, `"execution_date"`, or `"logical_date"` (omit to use ``execution_date``; execution_date and logical_date are mapped to whichever name the target Airflow version uses)
     - descending: Sort direction (default True). Ignored when order_by is omitted; defaults always use execution_date descending
 
     Returns
@@ -389,7 +400,7 @@ def airflow_dataset_events(
     )
 
 
-@mcp.tool(annotations=WRITE_TOOL_ANNOTATIONS)
+@write_tool
 @handle_errors
 def airflow_trigger_dag(
     instance: str | None = None,
@@ -426,7 +437,7 @@ def airflow_trigger_dag(
     )
 
 
-@mcp.tool(annotations=WRITE_TOOL_ANNOTATIONS)
+@write_tool
 @handle_errors
 def airflow_clear_task_instances(
     instance: str | None = None,
@@ -484,7 +495,7 @@ def airflow_clear_task_instances(
     )
 
 
-@mcp.tool(annotations=WRITE_TOOL_ANNOTATIONS)
+@write_tool
 @handle_errors
 def airflow_clear_dag_run(
     instance: str | None = None,
@@ -530,7 +541,7 @@ def airflow_clear_dag_run(
     )
 
 
-@mcp.tool(annotations=WRITE_TOOL_ANNOTATIONS)
+@write_tool
 @handle_errors
 def airflow_pause_dag(
     instance: str | None = None, ui_url: str | None = None, dag_id: str | None = None
@@ -549,7 +560,7 @@ def airflow_pause_dag(
     return airflow_tools.pause_dag(instance=instance, ui_url=ui_url, dag_id=dag_id)
 
 
-@mcp.tool(annotations=WRITE_TOOL_ANNOTATIONS)
+@write_tool
 @handle_errors
 def airflow_unpause_dag(
     instance: str | None = None, ui_url: str | None = None, dag_id: str | None = None

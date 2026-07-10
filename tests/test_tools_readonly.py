@@ -214,12 +214,16 @@ def _install_fake_airflow_client(monkeypatch: pytest.MonkeyPatch):
     client_mod.model = model_pkg
     pkg.client = client_mod
 
-    sys.modules["airflow_client"] = pkg
-    sys.modules["airflow_client.client"] = client_mod
-    sys.modules["airflow_client.client.model"] = model_pkg
-    sys.modules["airflow_client.client.model.dag"] = dag_mod
-    sys.modules["airflow_client.client.model.dag_run"] = dag_run_mod
-    sys.modules["airflow_client.client.model.clear_task_instance"] = clear_task_instance_mod
+    # setitem (not plain assignment) so the real package is restored after each
+    # test; leaked fakes would poison find_spec-based client-major detection.
+    monkeypatch.setitem(sys.modules, "airflow_client", pkg)
+    monkeypatch.setitem(sys.modules, "airflow_client.client", client_mod)
+    monkeypatch.setitem(sys.modules, "airflow_client.client.model", model_pkg)
+    monkeypatch.setitem(sys.modules, "airflow_client.client.model.dag", dag_mod)
+    monkeypatch.setitem(sys.modules, "airflow_client.client.model.dag_run", dag_run_mod)
+    monkeypatch.setitem(
+        sys.modules, "airflow_client.client.model.clear_task_instance", clear_task_instance_mod
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -1151,7 +1155,9 @@ def test_list_task_instances_combined_filters(monkeypatch: pytest.MonkeyPatch):
     assert payload["count"] == 1
     assert payload["task_instances"][0]["task_id"] == "t1"
     assert payload["task_instances"][0]["state"] == "FAILED"
-    assert payload["filters"]["state"] == ["Failed"]
+    # State filters normalize to lowercase (Airflow's canonical form) so they can
+    # also be pushed server-side; the echo reflects what was actually applied.
+    assert payload["filters"]["state"] == ["failed"]
     assert payload["filters"]["task_ids"] == ["t1"]
 
 

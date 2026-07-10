@@ -3,23 +3,32 @@ name: CI
 on:
   push:
     branches: ["main"]
+  # No base-branch filter: stacked PRs (base = another PR's branch) need CI too.
   pull_request:
-    branches: ["main"]
 
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Test against both apache-airflow-client majors:
+        # 2.x targets Airflow 2 (API v1), 3.x targets Airflow 3 (API v2)
+        airflow-client: ["<3", ">=3,<4"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: uv sync --frozen --group dev
+      - name: Install apache-airflow-client matrix version
+        run: uv pip install "apache-airflow-client${{ matrix.airflow-client }}"
       - name: Lint
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
       - name: Test
-        run: uv run pytest -q
+        run: uv run --no-sync pytest -q
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -31,4 +40,3 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

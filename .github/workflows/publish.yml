@@ -20,9 +20,10 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Validate release tag
         id: version
         env:
@@ -66,20 +67,38 @@ jobs:
     permissions:
       contents: read
 
+  security:
+    needs: validate-ref
+    uses: ./.github/workflows/security.yml
+    with:
+      version: ${{ needs.validate-ref.outputs.version }}
+    permissions:
+      contents: read
+
   build:
     needs: validate-ref
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v4
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
         with:
           python-version: "3.12"
+          enable-cache: false
       - name: Build package
         run: uv build
+      - name: Attest Python distributions
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: dist/*
       - name: Upload distribution
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist
           path: dist/
@@ -98,10 +117,11 @@ jobs:
           - client: apache-airflow-client==3.3.0
             api-version: v2
     steps:
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+          enable-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: ${{ runner.temp }}/dist
@@ -157,14 +177,22 @@ jobs:
           PY
 
   publish-ghcr:
-    needs: [validate-ref, quality, e2e, build, wheel-test]
+    needs: [validate-ref, quality, e2e, security, build, wheel-test]
     runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
       - name: Reconfirm GitHub Release does not exist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -185,28 +213,75 @@ jobs:
             exit 1
           fi
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Extract image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
           build-args: |
             VERSION=${{ needs.validate-ref.outputs.version }}
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+      - name: Audit the published image digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
+        run: |
+          docker pull "$IMAGE"
+          ./scripts/security_scan_image.sh "$IMAGE" "$RUNNER_TEMP/release-security-reports"
+      - name: Upload release security reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-security-reports
+          path: ${{ runner.temp }}/release-security-reports/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Attest the published image digest
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+      - name: Promote audited digest to release tags
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          mapfile -t tags <<< "$TAGS"
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            [[ -n "$tag" ]] && tag_args+=(--tag "$tag")
+          done
+          if [[ "${#tag_args[@]}" -eq 0 ]]; then
+            echo "metadata action produced no release tags" >&2
+            exit 1
+          fi
+          docker buildx imagetools create "${tag_args[@]}" "$IMAGE@$DIGEST"
+          for tag in "${tags[@]}"; do
+            [[ -n "$tag" ]] || continue
+            promoted_digest="$(docker buildx imagetools inspect "$tag" | awk '/^Digest:/ {print $2; exit}')"
+            if [[ "$promoted_digest" != "$DIGEST" ]]; then
+              echo "$tag resolved to $promoted_digest instead of $DIGEST" >&2
+              exit 1
+            fi
+          done
 
   publish-pypi:
     needs: [validate-ref, build, publish-ghcr]
@@ -216,12 +291,12 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist/
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
 
   publish-github-release:
     needs: [build, publish-pypi]
@@ -229,13 +304,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-security-reports
+          path: security-reports/
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --verify-tag --generate-notes
+        run: gh release create "$TAG" dist/* security-reports/* --verify-tag --generate-notes

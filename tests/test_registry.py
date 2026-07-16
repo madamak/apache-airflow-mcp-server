@@ -46,6 +46,35 @@ def test_load_registry(tmp_registry_file: Path):
     assert reg.default_instance == "data-stg"
 
 
+@pytest.mark.parametrize(
+    "host",
+    [
+        "file:///tmp/airflow",
+        "airflow.example.com",
+        "https://user:password@airflow.example.com",
+        "https://airflow.example.com?token=secret",
+        "https://airflow.example.com/#fragment",
+        "https://airflow.example.com:invalid",
+        "https://air flow.example.com",
+    ],
+)
+def test_load_registry_rejects_unsafe_or_malformed_host(tmp_path: Path, host: str):
+    registry_file = tmp_path / "instances.yaml"
+    registry_file.write_text(
+        "data-stg:\n"
+        f"  host: {host}\n"
+        "  api_version: v1\n"
+        "  auth:\n"
+        "    type: basic\n"
+        "    username: user\n"
+        "    password: pass\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Invalid configuration.*host"):
+        load_registry_from_yaml(str(registry_file))
+
+
 def test_load_registry_with_bearer_auth_experimental(tmp_path: Path):
     yaml_text = (
         "ml-prod:\n"

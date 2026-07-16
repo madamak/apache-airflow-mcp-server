@@ -5,6 +5,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-16
+
+### Security
+
+- Runtime container builds now use a digest-pinned base, exclude development
+  dependencies, and audit the exact image's installed Python environment before
+  release tags are assigned.
+- CI scans both read-only and write-enabled MCP tool metadata with a pinned Cisco
+  MCP Scanner YARA analyzer and fails on incomplete scans or untriaged YARA
+  findings.
+- Release images now publish an SBOM and build provenance; Python distribution
+  artifacts and OCI image digests receive GitHub build attestations.
+- Quickstarts now enable read-only mode explicitly, and Docker documentation
+  emphasizes loopback-only port publishing for the unauthenticated HTTP
+  transport.
+- Instance endpoints now reject non-HTTP(S) schemes, embedded credentials,
+  malformed ports, query strings, and fragments before any network request.
+
 ## [1.0.0] - 2026-07-16
 
 This release establishes the documented incident-response tools and

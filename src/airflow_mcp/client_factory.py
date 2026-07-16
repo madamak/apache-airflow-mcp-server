@@ -7,6 +7,7 @@ import ssl
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
@@ -52,6 +53,19 @@ def _fetch_jwt_token(
 ) -> str:
     """Obtain a JWT access token from an Airflow 3 API server (POST /auth/token)."""
     url = f"{host.rstrip('/')}/auth/token"
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        hostname = parsed.hostname
+    except ValueError as exc:
+        raise AirflowToolError(
+            "Airflow host must be a valid HTTP(S) URL",
+            code="CONFIG_ERROR",
+        ) from exc
+    if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+        raise AirflowToolError(
+            "Airflow host must be a full HTTP(S) URL",
+            code="CONFIG_ERROR",
+        )
     body = json.dumps({"username": username, "password": password}).encode("utf-8")
     request = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
@@ -63,7 +77,10 @@ def _fetch_jwt_token(
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(request, timeout=timeout, context=ssl_context) as response:
+        # Bandit cannot infer that the configured URL was restricted to HTTP(S).
+        with urllib.request.urlopen(  # nosec B310
+            request, timeout=timeout, context=ssl_context
+        ) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         context: dict[str, Any] = {}

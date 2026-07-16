@@ -24,7 +24,11 @@ Useful context when assessing this server:
   MCP `destructiveHint`; that hint is advisory — clients that honor it prompt
   before execution, others may not. The enforced server-side protection is
   `AIRFLOW_MCP_READ_ONLY=true`, which removes write tools from the tool
-  surface entirely.
+  surface entirely. The documented quickstarts enable read-only mode; enabling
+  writes is a deliberate deployment decision.
 - **Transport**: the HTTP transport binds to `127.0.0.1` by default and has no
   built-in authentication — put it behind an authenticating proxy before
-  exposing it beyond localhost.
+  exposing it beyond localhost. The container listens on all interfaces inside
+  its network namespace so Docker can route traffic to it; publish the port as
+  `127.0.0.1:8765:8765`, as documented, unless an authenticated private proxy
+  is the intended ingress.

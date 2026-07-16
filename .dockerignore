@@ -1,5 +1,7 @@
 .git
 .github
+.local/
+ROADMAP.md
 __pycache__/
 .mypy_cache/
 .pytest_cache/
@@ -20,4 +22,3 @@ instances.yaml
 venv/
 env/
 terminals/
-

@@ -1,0 +1,65 @@
+name: Security
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_call:
+    inputs:
+      version:
+        description: Package version embedded in the candidate image
+        required: false
+        type: string
+        default: 0.0.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Install development dependencies
+        run: uv sync --frozen --group dev
+      - name: Run Bandit
+        run: uv run --no-sync bandit -q -r src -c pyproject.toml
+
+  image-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Build candidate runtime image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          load: true
+          tags: airflow-mcp:security-candidate
+          build-args: |
+            VERSION=${{ inputs.version || '0.0.0' }}
+      - name: Audit dependencies and MCP surfaces
+        run: ./scripts/security_scan_image.sh airflow-mcp:security-candidate security-reports
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: security-reports
+          path: security-reports/
+          if-no-files-found: warn
+          retention-days: 30

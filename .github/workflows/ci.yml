@@ -7,6 +7,13 @@ on:
   pull_request:
   workflow_call:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint-and-test:
     # Keep these names stable because main branch protection requires them.
@@ -25,14 +32,18 @@ jobs:
           - client-family: ">=3,<4"
             airflow-client: "==3.3.0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: uv sync --frozen --group dev
       - name: Install apache-airflow-client matrix version
-        run: uv pip install "apache-airflow-client${{ matrix.airflow-client }}"
+        env:
+          AIRFLOW_CLIENT_SPEC: apache-airflow-client${{ matrix.airflow-client }}
+        run: uv pip install "$AIRFLOW_CLIENT_SPEC"
       - name: Lint
         run: uv run --no-sync ruff check .
       - name: Test
@@ -41,10 +52,11 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Scan repository with Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

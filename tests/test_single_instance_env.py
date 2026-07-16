@@ -118,6 +118,21 @@ def test_invalid_api_version_rejected():
     assert "api_version" in str(exc.value)
 
 
+def test_single_instance_rejects_non_http_host_without_echoing_credentials():
+    settings = AirflowServerConfig(
+        host="ftp://user:secret@airflow.example.com",
+        username="admin",
+        password="secret",
+    )
+
+    with pytest.raises(AirflowToolError) as exc:
+        build_single_instance_registry(settings)
+
+    assert exc.value.code == "CONFIG_ERROR"
+    assert "host" in str(exc.value)
+    assert "secret" not in str(exc.value)
+
+
 def test_discovery_tools_with_env_only_config(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("AIRFLOW_MCP_HOST", "https://airflow.example.com")
     monkeypatch.setenv("AIRFLOW_MCP_USERNAME", "admin")

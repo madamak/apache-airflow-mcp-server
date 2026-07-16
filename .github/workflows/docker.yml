@@ -9,6 +9,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "src/**"
+      - "scripts/security_scan_image.sh"
       - ".github/workflows/docker.yml"
   pull_request:
     paths:
@@ -16,18 +17,25 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "src/**"
+      - "scripts/security_scan_image.sh"
       - ".github/workflows/docker.yml"
 
 permissions:
   contents: read
 
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - name: Build image without publishing
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: false

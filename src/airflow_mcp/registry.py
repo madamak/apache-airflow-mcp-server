@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -85,6 +86,26 @@ class InstanceConfig(BaseModel):
     api_version: str | None = None  # None → inferred from the installed client major
     verify_ssl: bool = True
     auth: AuthConfig
+
+    @field_validator("host")
+    @classmethod
+    def _validate_host(cls, value: str) -> str:
+        host = value.strip()
+        try:
+            parsed = urlparse(host)
+            hostname = parsed.hostname
+            _ = parsed.port  # Force validation of malformed ports.
+        except ValueError as exc:
+            raise ValueError("host must be a valid HTTP(S) URL") from exc
+        if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+            raise ValueError("host must be a full HTTP(S) URL")
+        if any(character.isspace() for character in host):
+            raise ValueError("host must not contain whitespace")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("host must not contain embedded credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("host must not contain a query string or fragment")
+        return host
 
     @field_validator("api_version")
     @classmethod
@@ -218,8 +239,12 @@ def build_single_instance_registry(settings: AirflowServerConfig) -> InstanceReg
             auth=auth,
         )
     except ValidationError as exc:
+        details = "; ".join(
+            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+            for err in exc.errors(include_input=False, include_url=False)
+        )
         raise AirflowToolError(
-            f"Invalid single-instance configuration: {exc}",
+            f"Invalid single-instance configuration: {details}",
             code="CONFIG_ERROR",
         ) from exc
     return InstanceRegistry(instances={key: instance}, default_instance=key)

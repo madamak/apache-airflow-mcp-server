@@ -18,6 +18,13 @@ on:
     - cron: "17 4 * * *"
   workflow_call:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
@@ -28,8 +35,10 @@ jobs:
     env:
       E2E_COMPOSE_PROJECT: airflow-mcp-e2e-${{ matrix.entry }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -39,4 +48,5 @@ jobs:
           # The harness prints project-scoped logs before tearing down on failure;
           # its temporary registry and bearer token never survive the step.
           E2E_DUMP_LOGS_ON_FAILURE: "1"
-        run: ./scripts/e2e.sh ${{ matrix.entry }}
+          E2E_ENTRY: ${{ matrix.entry }}
+        run: ./scripts/e2e.sh "$E2E_ENTRY"

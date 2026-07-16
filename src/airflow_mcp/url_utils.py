@@ -41,12 +41,9 @@ def _encode_query(params: dict[str, str | None]) -> str:
 def _resolve_instance_key_from_host(host: str) -> str | None:
     reg = get_registry()
     for key, inst in reg.instances.items():
-        try:
-            reg_host = urlparse(inst.host).hostname or ""
-            if reg_host == host:
-                return key
-        except Exception:
-            pass
+        reg_host = urlparse(inst.host).hostname or ""
+        if reg_host == host:
+            return key
     return None
 
 

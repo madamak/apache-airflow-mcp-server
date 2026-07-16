@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from airflow_mcp import client_factory as cf
+from airflow_mcp.errors import AirflowToolError
 from airflow_mcp.registry import reset_registry_cache
 
 
@@ -27,7 +29,49 @@ class _BearerApiClient:
         self.configuration = config
 
 
-def test_client_factory_sets_bearer_header_experimental(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_fetch_jwt_rejects_non_http_url_before_network(monkeypatch: pytest.MonkeyPatch):
+    urlopen = MagicMock()
+    monkeypatch.setattr(cf.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(AirflowToolError) as exc:
+        cf._fetch_jwt_token(
+            "file:///tmp/airflow",
+            "user",
+            "password",
+            verify_ssl=True,
+            timeout=10,
+        )
+
+    assert exc.value.code == "CONFIG_ERROR"
+    urlopen.assert_not_called()
+
+
+def test_fetch_jwt_posts_credentials_to_valid_https_url(monkeypatch: pytest.MonkeyPatch):
+    response = MagicMock()
+    response.read.return_value = b'{"access_token":"jwt-token"}'
+    context_manager = MagicMock()
+    context_manager.__enter__.return_value = response
+    urlopen = MagicMock(return_value=context_manager)
+    monkeypatch.setattr(cf.urllib.request, "urlopen", urlopen)
+
+    token = cf._fetch_jwt_token(
+        "https://airflow.example.com/",
+        "user",
+        "password",
+        verify_ssl=True,
+        timeout=10,
+    )
+
+    assert token == "jwt-token"
+    request = urlopen.call_args.args[0]
+    assert request.full_url == "https://airflow.example.com/auth/token"
+    assert request.method == "POST"
+    assert request.data == b'{"username": "user", "password": "password"}'
+
+
+def test_client_factory_sets_bearer_header_experimental(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """Bearer auth is experimental; ensure Authorization header is applied when selected."""
 
     reset_registry_cache()
@@ -68,4 +112,3 @@ def test_client_factory_sets_bearer_header_experimental(monkeypatch: pytest.Monk
     assert cfg.verify_ssl is True
 
     reset_registry_cache()
-

@@ -20,6 +20,7 @@ from airflow_mcp import client_factory as cf
 from airflow_mcp import tools as airflow_tools
 from airflow_mcp.errors import AirflowToolError
 from airflow_mcp.registry import reset_registry_cache
+from airflow_mcp.tools import _common
 from airflow_mcp.url_utils import build_airflow_ui_url, parse_airflow_ui_url
 
 
@@ -498,6 +499,57 @@ def test_clear_task_instances_moved_to_task_instance_api(v2_instance: str):
     call = client.calls["post_clear_task_instances"]
     assert _field(call["body"], "task_ids") == ["extract"]
     assert _field(call["body"], "dry_run") is True
+
+
+def test_clear_task_ids_wrapper_is_used_when_available(monkeypatch: pytest.MonkeyPatch):
+    wrapped: list[str] = []
+
+    class Wrapper:
+        def __init__(self, *, actual_instance: str) -> None:
+            wrapped.append(actual_instance)
+
+    monkeypatch.setattr(
+        _common,
+        "import_module",
+        lambda _name: SimpleNamespace(ClearTaskInstancesBodyTaskIdsInner=Wrapper),
+    )
+    monkeypatch.setattr(_common, "_build_v3_model", lambda _module, _class, payload: payload)
+
+    body = _common._build_clear_task_instances_body(task_ids=["extract", "load"])
+
+    assert wrapped == ["extract", "load"]
+    assert all(isinstance(item, Wrapper) for item in body["task_ids"])
+
+
+def test_clear_task_ids_fall_back_only_when_wrapper_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def missing_wrapper(_name: str):
+        raise ModuleNotFoundError
+
+    monkeypatch.setattr(_common, "import_module", missing_wrapper)
+    monkeypatch.setattr(_common, "_build_v3_model", lambda _module, _class, payload: payload)
+
+    body = _common._build_clear_task_instances_body(task_ids=["extract"])
+
+    assert body["task_ids"] == ["extract"]
+
+
+def test_clear_task_ids_wrapper_validation_errors_propagate(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class BrokenWrapper:
+        def __init__(self, *, actual_instance: str) -> None:
+            raise ValueError(actual_instance)
+
+    monkeypatch.setattr(
+        _common,
+        "import_module",
+        lambda _name: SimpleNamespace(ClearTaskInstancesBodyTaskIdsInner=BrokenWrapper),
+    )
+
+    with pytest.raises(ValueError, match="extract"):
+        _common._build_clear_task_instances_body(task_ids=["extract"])
 
 
 def test_clear_operations_default_to_dry_run_on_v2(v2_instance: str):

@@ -233,7 +233,7 @@ def airflow_list_task_instances(
     state: list[str] | None = None,
     task_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """List task instances for a DAG run (state, try_number, per-attempt log URL).
+    """List task instances within one DAG run, including state and attempt log URLs.
 
     Parameters
     - instance: Instance key (optional)
@@ -418,7 +418,7 @@ def airflow_trigger_dag(
     - ui_url: Airflow UI URL to resolve instance (optional; takes precedence)
     - dag_id: DAG identifier (required if ui_url not provided)
     - dag_run_id: Custom run id (optional)
-    - logical_date: Logical date/time for run (optional; ISO8601)
+    - logical_date: Optional ISO8601 logical date/time assigned to the new run
     - conf: Configuration object as dict or JSON string (optional)
     - note: Run note/comment (optional)
 
@@ -509,7 +509,7 @@ def airflow_clear_dag_run(
     dry_run: bool | None = True,
     reset_dag_runs: bool | None = None,
 ) -> dict[str, Any]:
-    """Clear all task instances in a specific DAG run (destructive).
+    """Destructively clear all task instances within one specific DAG run.
 
     Parameters
     - instance: Instance key (optional; mutually exclusive with ui_url)

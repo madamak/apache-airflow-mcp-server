@@ -7,6 +7,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
 [![Airflow](https://img.shields.io/badge/live--tested-2.11%20%7C%203.3-017CEE?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/)
 [![CI](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml)
+[![Security](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/security.yml/badge.svg)](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/security.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
@@ -48,6 +49,7 @@ claude mcp add airflow \
   --env AIRFLOW_MCP_HOST=https://airflow.example.com \
   --env AIRFLOW_MCP_USERNAME=admin \
   --env AIRFLOW_MCP_PASSWORD=your-password \
+  --env AIRFLOW_MCP_READ_ONLY=true \
   -- uvx --from apache-airflow-mcp-server \
   --with apache-airflow-client==3.3.0 airflow-mcp --transport stdio
 ```
@@ -67,7 +69,8 @@ Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
       "env": {
         "AIRFLOW_MCP_HOST": "https://airflow.example.com",
         "AIRFLOW_MCP_USERNAME": "admin",
-        "AIRFLOW_MCP_PASSWORD": "your-password"
+        "AIRFLOW_MCP_PASSWORD": "your-password",
+        "AIRFLOW_MCP_READ_ONLY": "true"
       }
     }
   }
@@ -89,7 +92,8 @@ Add to `~/.cursor/mcp.json`:
       "env": {
         "AIRFLOW_MCP_HOST": "https://airflow.example.com",
         "AIRFLOW_MCP_USERNAME": "admin",
-        "AIRFLOW_MCP_PASSWORD": "your-password"
+        "AIRFLOW_MCP_PASSWORD": "your-password",
+        "AIRFLOW_MCP_READ_ONLY": "true"
       }
     }
   }
@@ -112,7 +116,8 @@ Add to `.vscode/mcp.json`:
       "env": {
         "AIRFLOW_MCP_HOST": "https://airflow.example.com",
         "AIRFLOW_MCP_USERNAME": "admin",
-        "AIRFLOW_MCP_PASSWORD": "your-password"
+        "AIRFLOW_MCP_PASSWORD": "your-password",
+        "AIRFLOW_MCP_READ_ONLY": "true"
       }
     }
   }
@@ -128,6 +133,7 @@ Run the server yourself and point the client at the endpoint:
 ```bash
 AIRFLOW_MCP_HOST=https://airflow.example.com \
 AIRFLOW_MCP_USERNAME=admin AIRFLOW_MCP_PASSWORD=your-password \
+AIRFLOW_MCP_READ_ONLY=true \
 airflow-mcp --transport http --host 127.0.0.1 --port 8765
 ```
 
@@ -144,7 +150,7 @@ Health check: `GET /health` → `200 OK`.
 >
 > *"https://airflow.example.com/dags/etl_pipeline/grid — what happened here, and is it safe to clear?"*
 >
-> *"Preview clearing the failed task from that alert, then explain what would rerun."*
+> *"Show the failed task's error context and tell me the smallest recovery action."*
 
 ## Airflow compatibility
 
@@ -234,7 +240,16 @@ Every tool accepts either an `instance` key (`data-stg`) or a `ui_url` — a ful
 
 ### Read-only mode
 
-Pointing an AI agent at production? Set `AIRFLOW_MCP_READ_ONLY=true` and the write tools (trigger, clear, pause/unpause) are never registered. This prevents MCP mutations, but read tools can still disclose sensitive logs, configuration, rendered fields, and DAG-run data; use least-privilege Airflow credentials. With writes enabled, tools carry MCP `destructiveHint` annotations that clients can use when deciding whether to request confirmation.
+The quickstarts set `AIRFLOW_MCP_READ_ONLY=true`: write tools (trigger, clear,
+pause/unpause) are never registered. This prevents MCP mutations, but read tools
+can still disclose sensitive logs, configuration, rendered fields, and DAG-run
+data; use least-privilege Airflow credentials.
+
+To enable recovery operations deliberately, set `AIRFLOW_MCP_READ_ONLY=false`.
+Write tools then carry MCP `destructiveHint` annotations that clients can use
+when deciding whether to request confirmation. Annotations are advisory, so do
+not enable writes unless the Airflow credentials and MCP client's approval
+behavior are appropriate for the target environment.
 
 ## Tools
 
@@ -312,6 +327,7 @@ docker run -p 127.0.0.1:8765:8765 \
   -e AIRFLOW_MCP_HOST=https://airflow.example.com \
   -e AIRFLOW_MCP_USERNAME=admin \
   -e AIRFLOW_MCP_PASSWORD=your-password \
+  -e AIRFLOW_MCP_READ_ONLY=true \
   ghcr.io/madamak/apache-airflow-mcp-server:latest
 ```
 
@@ -323,6 +339,15 @@ endpoint has no built-in caller authentication: keep it loopback-bound or place
 it behind an authenticated private proxy. Mount a same-API-family registry YAML
 for multi-instance setups. Airflow 2 deployments should use the pinned local
 installation path above until a separate v1 image is published.
+
+CI audits the exact image's installed Python dependencies and scans both the
+read-only and write-enabled MCP tool surfaces with a pinned Cisco MCP Scanner
+release's YARA analyzer. The security workflow fails on incomplete scans or any
+untriaged YARA finding. Starting with v1.0.1, release assets include the
+machine-readable scan reports, and release image manifests carry attached SBOM
+and provenance attestations covering their broader package inventory. These
+are automated checks, not a security certification or substitute for
+deployment-specific review.
 
 ### FastMCP tooling
 

@@ -268,9 +268,10 @@ def _build_clear_task_instances_body(**kwargs: Any) -> Any:
             inner_cls = import_module(
                 "airflow_client.client.models.clear_task_instances_body_task_ids_inner"
             ).ClearTaskInstancesBodyTaskIdsInner
+        except (ImportError, AttributeError):
+            inner_cls = None
+        if inner_cls is not None:
             payload["task_ids"] = [inner_cls(actual_instance=tid) for tid in task_ids]
-        except Exception:
-            pass
     return _build_v3_model(
         "airflow_client.client.models.clear_task_instances_body",
         "ClearTaskInstancesBody",

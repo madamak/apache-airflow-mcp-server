@@ -13,6 +13,12 @@
 
 > Independent community project; not affiliated with or endorsed by the Apache Software Foundation.
 
+Published through [PyPI](https://pypi.org/project/apache-airflow-mcp-server/),
+[GHCR](https://github.com/madamak/apache-airflow-mcp-server/pkgs/container/apache-airflow-mcp-server),
+and the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.madamak%2Fapache-airflow-mcp-server).
+Reproducible scan reports, dependency audits, SBOMs, and provenance are attached
+to each [immutable release](https://github.com/madamak/apache-airflow-mcp-server/releases/latest).
+
 Connect Claude, Cursor, VS Code, or another [MCP](https://modelcontextprotocol.io) client to your Apache Airflow deployments and help agents diagnose failed DAGs.
 
 Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this fail?"* — the agent resolves the URL, finds the failed tasks, pulls log errors filtered and bounded before the MCP response, and can re-trigger or clear runs. Write tools carry destructive-operation annotations that MCP clients can use to request confirmation.

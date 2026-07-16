@@ -1,9 +1,10 @@
 """E2E fixture: reschedule-mode sensor.
 
-Pokes False until ~12s after the run started, so the task reschedules a few
-times before succeeding. This protects the version-dependent ``try_number``
-behavior documented in the README (Airflow 2.10+ no longer increments it for
-each reschedule).
+Pokes False until ~12s after the run started, then succeeds on its next poke.
+The reschedule interval leaves enough time for standalone's scheduler to process
+the executor event before the task becomes eligible again. This protects the
+version-dependent ``try_number`` behavior documented in the README (Airflow
+2.10+ no longer increments it for each reschedule).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ except ImportError:  # Airflow 2
     from airflow.sensors.python import PythonSensor
 
 WAIT_SECONDS = 12
+RESCHEDULE_INTERVAL_SECONDS = 20
 
 
 def _ready(**context) -> bool:
@@ -39,6 +41,6 @@ with DAG(
         task_id="wait_for_time",
         python_callable=_ready,
         mode="reschedule",
-        poke_interval=5,
+        poke_interval=RESCHEDULE_INTERVAL_SECONDS,
         timeout=300,
     )

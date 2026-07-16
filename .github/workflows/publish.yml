@@ -96,7 +96,9 @@ jobs:
       - name: Attest Python distributions
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
-          subject-path: dist/*
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
       - name: Upload distribution
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

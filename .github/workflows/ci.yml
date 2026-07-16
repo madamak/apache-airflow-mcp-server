@@ -9,6 +9,8 @@ on:
 
 jobs:
   lint-and-test:
+    # Keep these names stable because main branch protection requires them.
+    name: lint-and-test (${{ matrix.python-version }}, ${{ matrix.client-family }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -16,7 +18,12 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         # Test against both apache-airflow-client majors:
         # 2.x targets Airflow 2 (API v1), 3.x targets Airflow 3 (API v2)
-        airflow-client: ["==2.10.0", "==3.3.0"]
+        client-family: ["<3", ">=3,<4"]
+        include:
+          - client-family: "<3"
+            airflow-client: "==2.10.0"
+          - client-family: ">=3,<4"
+            airflow-client: "==3.3.0"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4

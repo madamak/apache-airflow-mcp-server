@@ -1,5 +1,7 @@
 # Apache Airflow MCP Server
 
+<!-- mcp-name: io.github.madamak/apache-airflow-mcp-server -->
+
 [![MCP](https://img.shields.io/badge/MCP-Server-blueviolet)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
 [![Python](https://img.shields.io/pypi/pyversions/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)

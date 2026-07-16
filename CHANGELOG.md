@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-16
+
+This release establishes the documented incident-response tools and
+configuration as the stable 1.x contract for the live-tested Airflow 2.11 and
+Airflow 3.3 paths. Other Airflow versions remain experimental until they join
+the live compatibility matrix.
+
 ### Added
 
 - **End-to-end test harness against real Airflow** (`scripts/e2e.sh`): spawns a
@@ -24,7 +31,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   write tools (trigger, clear, pause/unpause), preventing MCP mutations. Read
   tools can still return sensitive operational data and require least-privilege
   Airflow credentials.
-- **Experimental Airflow 3 (API v2) support**: set `api_version: v2` (or
+- **Airflow 3.3 (API v2) support**: set `api_version: v2` (or
   `AIRFLOW_MCP_API_VERSION=v2`) and install the generated client version that
   matches the Airflow deployment.
   Includes JWT auth (basic credentials exchanged via `POST /auth/token` and

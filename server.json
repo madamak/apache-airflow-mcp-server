@@ -1,0 +1,63 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.madamak/apache-airflow-mcp-server",
+  "title": "Incident Response MCP for Apache Airflow",
+  "description": "Diagnose Airflow failures from UI links with bounded logs and optional recovery actions.",
+  "repository": {
+    "url": "https://github.com/madamak/apache-airflow-mcp-server",
+    "source": "github",
+    "id": "1105594193"
+  },
+  "websiteUrl": "https://github.com/madamak/apache-airflow-mcp-server#readme",
+  "version": "1.0.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "apache-airflow-mcp-server",
+      "version": "1.0.2",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AIRFLOW_MCP_HOST",
+          "description": "Base URL of the Airflow instance.",
+          "placeholder": "https://airflow.example.com",
+          "isRequired": true
+        },
+        {
+          "name": "AIRFLOW_MCP_TOKEN",
+          "description": "Bearer token. Provide this or both username and password; it takes precedence when set.",
+          "isSecret": true
+        },
+        {
+          "name": "AIRFLOW_MCP_USERNAME",
+          "description": "Basic-auth username. Required with password when token is omitted."
+        },
+        {
+          "name": "AIRFLOW_MCP_PASSWORD",
+          "description": "Basic-auth password. Required with username when token is omitted.",
+          "isSecret": true
+        },
+        {
+          "name": "AIRFLOW_MCP_API_VERSION",
+          "description": "The directory install uses the Airflow 3 client. See the README for Airflow 2 setup.",
+          "value": "v2"
+        },
+        {
+          "name": "AIRFLOW_MCP_READ_ONLY",
+          "description": "Expose only read tools unless write access is deliberately selected.",
+          "choices": [
+            "true",
+            "false"
+          ],
+          "default": "true",
+          "format": "boolean",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

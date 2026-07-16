@@ -1,7 +1,7 @@
 [project]
 name = "apache-airflow-mcp-server"
 dynamic = ["version"]
-description = "Production-grade MCP server for Apache Airflow - Enable AI agents to inspect DAGs, runs, logs, and perform operations"
+description = "Incident-response MCP server for Apache Airflow with URL-first diagnosis, bounded logs, multi-instance routing, and optional recovery actions"
 readme = "README.md"
 license = "Apache-2.0"
 authors = [
@@ -43,6 +43,7 @@ Issues = "https://github.com/madamak/apache-airflow-mcp-server/issues"
 
 [project.scripts]
 airflow-mcp = "airflow_mcp:main"
+apache-airflow-mcp-server = "airflow_mcp:main"
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

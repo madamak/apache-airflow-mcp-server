@@ -5,6 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-16
+
+### Added
+
+- The package now exposes `apache-airflow-mcp-server` as a console-script alias
+  for `airflow-mcp`, matching the executable inferred by official MCP Registry
+  clients while preserving the existing command.
+- Official MCP Registry metadata and secretless GitHub OIDC publication are now
+  included; directory installs default to the Airflow 3 client path and
+  read-only mode.
+- Glama maintainer metadata is included for directory ownership verification.
+
+### Changed
+
+- Package and README copy now describe the incident-response scope more
+  precisely and include explicit Apache Airflow trademark attribution.
+
 ## [1.0.1] - 2026-07-16
 
 ### Security

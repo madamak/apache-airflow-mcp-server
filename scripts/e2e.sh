@@ -77,7 +77,14 @@ fi
 uv venv "$ARTIFACT_VENV"
 uv pip install --python "$ARTIFACT_VENV/bin/python" \
   "$WHEEL" "$CLIENT_PIN" "pytest==8.4.2" "pytest-asyncio==1.2.0"
-export E2E_INSTALLED_AIRFLOW_MCP="$ARTIFACT_VENV/bin/airflow-mcp"
+for executable in airflow-mcp apache-airflow-mcp-server; do
+  if [[ ! -x "$ARTIFACT_VENV/bin/$executable" ]]; then
+    echo "installed console script not found: $ARTIFACT_VENV/bin/$executable" >&2
+    exit 1
+  fi
+done
+# Exercise the package-name alias used by official MCP Registry consumers.
+export E2E_INSTALLED_AIRFLOW_MCP="$ARTIFACT_VENV/bin/apache-airflow-mcp-server"
 
 echo "== [$ENTRY] starting $AIRFLOW_IMAGE (project: $COMPOSE_PROJECT) =="
 ENV_OWNED=1

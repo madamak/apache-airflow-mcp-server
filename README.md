@@ -5,7 +5,7 @@
 [![MCP](https://img.shields.io/badge/MCP-Server-blueviolet)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
 [![Python](https://img.shields.io/pypi/pyversions/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
-[![Airflow](https://img.shields.io/badge/live--tested-2.11%20%7C%203.3-017CEE?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/)
+[![Airflow](https://img.shields.io/badge/live--tested-2.11%20%7C%203.3-017CEE)](https://airflow.apache.org/)
 [![CI](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml)
 [![Security](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/security.yml/badge.svg)](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/security.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -13,9 +13,9 @@
 
 > Independent community project; not affiliated with or endorsed by the Apache Software Foundation.
 
-Connect Claude, Cursor, and any [MCP](https://modelcontextprotocol.io) client to your Apache Airflow deployments — and let AI agents debug failed DAGs for you.
+Connect Claude, Cursor, VS Code, or another [MCP](https://modelcontextprotocol.io) client to your Apache Airflow deployments and help agents diagnose failed DAGs.
 
-Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this fail?"* — the agent resolves the URL, finds the failed tasks, pulls the error lines from the logs (server-side filtered so it doesn't blow the context window), and can re-trigger or clear runs. Write tools carry destructive-operation annotations that MCP clients can use to request confirmation.
+Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this fail?"* — the agent resolves the URL, finds the failed tasks, pulls log errors filtered and bounded before the MCP response, and can re-trigger or clear runs. Write tools carry destructive-operation annotations that MCP clients can use to request confirmation.
 
 ## Highlights
 
@@ -382,3 +382,5 @@ If this server saves you a debugging session, a ⭐ helps other Airflow teams fi
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
+
+Apache Airflow and Airflow are registered trademarks of The Apache Software Foundation. This independent project is not affiliated with or endorsed by the ASF.

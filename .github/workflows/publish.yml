@@ -143,7 +143,6 @@ jobs:
           EXPECTED_VERSION: ${{ needs.validate-ref.outputs.version }}
         run: |
           cd "$RUNNER_TEMP"
-          export AIRFLOW_MCP_BIN="$RUNNER_TEMP/release-venv/bin/airflow-mcp"
           "$RUNNER_TEMP/release-venv/bin/python" - <<'PY'
           import asyncio
           import importlib.metadata
@@ -161,12 +160,12 @@ jobs:
               "EXPECTED_VERSION"
           ]
 
-          async def verify_console() -> None:
+          async def verify_console(executable: str) -> None:
               child_env = dict(os.environ)
               child_env.pop("PYTHONPATH", None)
               child_env.pop("VIRTUAL_ENV", None)
               transport = StdioTransport(
-                  command=os.environ["AIRFLOW_MCP_BIN"],
+                  command=str(venv / "bin" / executable),
                   args=["--transport", "stdio"],
                   env=child_env,
               )
@@ -175,7 +174,8 @@ jobs:
               assert "airflow_list_dags" in tools
               assert "airflow_clear_dag_run" not in tools
 
-          asyncio.run(verify_console())
+          for executable in ("airflow-mcp", "apache-airflow-mcp-server"):
+              asyncio.run(verify_console(executable))
           PY
 
   publish-ghcr:
@@ -328,3 +328,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: gh release edit "$TAG" --draft=false
+
+  dispatch-mcp-registry:
+    needs: publish-github-release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch official MCP Registry publication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh workflow run mcp-registry.yml --ref "$TAG" --field tag="$TAG"

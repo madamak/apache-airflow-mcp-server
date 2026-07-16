@@ -37,7 +37,7 @@ def test_trigger_dag_with_conf_and_logical_date():
     )
     payload = _payload(out)
     assert payload["dag_run_id"] == "manual__001"
-    assert payload["ui_url"].endswith("/dags/dag_a/dagRuns/manual__001")
+    assert payload["ui_url"].endswith("/dags/dag_a/grid?dag_run_id=manual__001")
     client = _get_cached_api_client("data-stg")
     dag_run_model = client.last_post_dag_run
     assert getattr(dag_run_model, "dag_run_id", None) == "manual__001"
@@ -55,9 +55,7 @@ def test_trigger_dag_invalid_conf_raises():
 
 def test_trigger_dag_invalid_logical_date():
     with pytest.raises(AirflowToolError) as exc:
-        airflow_tools.trigger_dag(
-            instance="data-stg", dag_id="dag_a", logical_date="2025-13-01"
-        )
+        airflow_tools.trigger_dag(instance="data-stg", dag_id="dag_a", logical_date="2025-13-01")
     assert exc.value.code == "INVALID_INPUT"
 
 
@@ -79,6 +77,19 @@ def test_clear_task_instances_normalizes_payload():
     clear_model = client.last_clear_task_instances
     assert getattr(clear_model, "task_ids", None) == ["task_a", "task_b"]
     assert getattr(clear_model, "dry_run", None) is True
+
+
+def test_clear_task_instances_defaults_to_dry_run():
+    payload = _payload(
+        airflow_tools.clear_task_instances(
+            instance="data-stg",
+            dag_id="dag_a",
+            task_ids=["task_a"],
+        )
+    )
+    client = _get_cached_api_client("data-stg")
+    assert getattr(client.last_clear_task_instances, "dry_run", None) is True
+    assert payload["dry_run"] is True
 
 
 def test_clear_task_instances_invalid_ids():
@@ -115,6 +126,23 @@ def test_clear_dag_run_clears_all_tasks():
             or getattr(clear_model, "include_upstream", None) is None
         )
         assert getattr(clear_model, "dry_run", None) is False
+
+
+def test_clear_dag_run_defaults_to_dry_run():
+    payload = _payload(
+        airflow_tools.clear_dag_run(
+            instance="data-stg",
+            dag_id="dag_a",
+            dag_run_id="dr1",
+        )
+    )
+    client = _get_cached_api_client("data-stg")
+    clear_model = client.last_clear_dag_run
+    if isinstance(clear_model, dict):
+        assert clear_model["dry_run"] is True
+    else:
+        assert getattr(clear_model, "dry_run", None) is True
+    assert payload["dry_run"] is True
 
 
 def test_clear_dag_run_with_extended_params(monkeypatch: pytest.MonkeyPatch):

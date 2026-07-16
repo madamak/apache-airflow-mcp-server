@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from ..client_factory import get_client_factory
@@ -17,6 +18,50 @@ from ._common import (
 )
 
 _factory = get_client_factory()
+
+
+def _clear_dag_run_v2(api: Any, dag_id: str, dag_run_id: str, body: Any) -> Any:
+    """Call Airflow 3's clear endpoint without its ambiguous union deserializer.
+
+    The generated 3.3 client models the response as an ``anyOf`` whose task
+    instance variants overlap. A valid server response can therefore raise
+    ``ValueError`` after the clear has already happened. Reading the raw JSON
+    preserves the API response and avoids reporting a successful mutation as an
+    internal failure.
+    """
+
+    raw_method = getattr(api, "clear_dag_run_without_preload_content", None)
+    if raw_method is None:
+        return api.clear_dag_run(dag_id, dag_run_id, dag_run_clear_body=body)
+
+    context = {"dag_id": dag_id, "dag_run_id": dag_run_id}
+    try:
+        response = raw_method(dag_id, dag_run_id, dag_run_clear_body=body)
+    except ApiException as exc:
+        _raise_api_error(exc, "Unable to clear DAG run", context=context)
+
+    status = getattr(response, "status", 200) or 200
+    try:
+        data = getattr(response, "data", b"")
+    finally:
+        release_conn = getattr(response, "release_conn", None)
+        if callable(release_conn):
+            release_conn()
+    if status >= 400:
+        exc = ApiException(status=status, reason=getattr(response, "reason", None))
+        exc.body = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
+        _raise_api_error(exc, "Unable to clear DAG run", context=context)
+    if not data:
+        return {}
+    text = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
+    try:
+        return json.loads(text)
+    except ValueError as exc:
+        raise AirflowToolError(
+            "Airflow returned an invalid JSON response after clearing the DAG run",
+            code="INTERNAL_ERROR",
+            context=context,
+        ) from exc
 
 
 def list_dag_runs(
@@ -211,10 +256,10 @@ def clear_dag_run(
     include_parentdag: bool | None = None,
     include_upstream: bool | None = None,
     include_downstream: bool | None = None,
-    dry_run: bool | None = None,
+    dry_run: bool | None = True,
     reset_dag_runs: bool | None = None,
 ) -> dict[str, Any]:
-    """Clear all task instances within a DAG run."""
+    """Clear all task instances within a DAG run; dry-run unless explicitly disabled."""
     with operation_logger(
         "airflow_clear_dag_run",
         instance=instance,
@@ -234,6 +279,7 @@ def clear_dag_run(
         op.update_context(
             instance=resolved.instance, dag_id=dag_id_value, dag_run_id=dag_run_id_value
         )
+        effective_dry_run = True if dry_run is None else dry_run
 
         # Build clear_dag_run body with conditional parameter support based on configuration.
         # Airflow 2.5.x may reject include_* and reset_dag_runs fields with 400 Bad Request.
@@ -262,10 +308,10 @@ def clear_dag_run(
                     code="INVALID_INPUT",
                     context={"instance": resolved.instance, "unsupported": requested},
                 )
-            body = _build_dag_run_clear_body(dry_run=dry_run if dry_run is not None else False)
-            response = api.clear_dag_run(dag_id_value, dag_run_id_value, dag_run_clear_body=body)
+            body = _build_dag_run_clear_body(dry_run=effective_dry_run)
+            response = _clear_dag_run_v2(api, dag_id_value, dag_run_id_value, body)
         else:
-            body_kwargs = {"dry_run": dry_run if dry_run is not None else False}
+            body_kwargs = {"dry_run": effective_dry_run}
             if config.enable_extended_clear_params:
                 if include_subdags is not None:
                     body_kwargs["include_subdags"] = include_subdags
@@ -300,6 +346,7 @@ def clear_dag_run(
         payload = {
             "dag_id": dag_id_value,
             "dag_run_id": dag_run_id_value,
+            "dry_run": effective_dry_run,
             "cleared": cleared_payload,
         }
         return op.success(_json_safe(payload))

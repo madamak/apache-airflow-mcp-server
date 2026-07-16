@@ -8,7 +8,7 @@ from ..observability import operation_logger
 from ..url_utils import resolve_and_validate
 from ..utils import json_safe_recursive as _json_safe
 from ..validation import validate_dataset_uri
-from ._common import _coerce_int
+from ._common import ApiException, _coerce_int, _raise_api_error
 
 _factory = get_client_factory()
 
@@ -80,7 +80,26 @@ def dataset_events(
             resp = api.get_asset_events(asset_id=asset_id, limit=limit_int)
             raw_events = getattr(resp, "asset_events", []) or []
         else:
-            resp = api.get_dataset_events(limit=limit_int, uri=dataset_uri_value)
+            # v1 filters events by dataset_id, not URI; resolve the dataset first.
+            try:
+                dataset = api.get_dataset(dataset_uri_value)
+            except ApiException as exc:
+                _raise_api_error(
+                    exc,
+                    "Unable to resolve dataset",
+                    context={
+                        "instance": resolved.instance,
+                        "dataset_uri": dataset_uri_value,
+                    },
+                )
+            dataset_id = getattr(dataset, "id", None)
+            if dataset_id is None:
+                raise AirflowToolError(
+                    f"No dataset found with uri '{dataset_uri_value}'",
+                    code="NOT_FOUND",
+                    context={"dataset_uri": dataset_uri_value},
+                )
+            resp = api.get_dataset_events(limit=limit_int, dataset_id=dataset_id)
             raw_events = getattr(resp, "dataset_events", []) or []
         payload = {
             "events": _json_safe(raw_events),

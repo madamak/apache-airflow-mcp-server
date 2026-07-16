@@ -1,0 +1,34 @@
+# E2E environment: Airflow 2.x standalone (SQLite + SequentialExecutor).
+# Deliberately minimal — one container, deterministic admin/admin credentials,
+# fast DAG parsing so seeded fixture DAGs appear quickly.
+#
+# Image tag comes from AIRFLOW_IMAGE (set by scripts/e2e.sh per matrix entry).
+services:
+  airflow:
+    image: ${AIRFLOW_IMAGE:-apache/airflow:2.11.0}
+    command: standalone
+    ports:
+      - target: 8080
+        published: "${AIRFLOW_HOST_PORT:-0}"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "5"
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "5"
+      AIRFLOW__WEBSERVER__WORKERS: "2"
+      # Entrypoint-driven DB migration + deterministic admin user; `standalone`
+      # then sees an existing user and skips its random-password generation.
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+    volumes:
+      - ../dags:/opt/airflow/dags:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 30s

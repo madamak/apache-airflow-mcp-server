@@ -28,11 +28,9 @@ def test_build_grid_url():
 
 
 def test_build_task_url():
-    url = build_airflow_ui_url(
-        "data-stg", "task", "my_dag", dag_run_id="dr1", task_id="task_a"
-    )
+    url = build_airflow_ui_url("data-stg", "task", "my_dag", dag_run_id="dr1", task_id="task_a")
     assert isinstance(url, str)
-    assert url.endswith("/dags/my_dag/task?task_id=task_a&dag_run_id=dr1")
+    assert url.endswith("/dags/my_dag/grid?dag_run_id=dr1&task_id=task_a&tab=details")
 
 
 def test_build_log_url():
@@ -40,7 +38,7 @@ def test_build_log_url():
         "data-stg", "log", "my_dag", dag_run_id="dr1", task_id="task_1", try_number=3
     )
     assert isinstance(url, str)
-    assert "/dags/my_dag/dagRuns/dr1/taskInstances/task_1/logs/3" in url
+    assert url.endswith("/dags/my_dag/grid?dag_run_id=dr1&task_id=task_1&tab=logs&try_number=3")
 
 
 def test_build_url_encodes_plus_in_dag_run_id():
@@ -57,7 +55,7 @@ def test_build_url_encodes_plus_in_dag_run_id():
         task_id="task_1",
         try_number=1,
     )
-    assert f"/dagRuns/{encoded}/" in log_url
+    assert f"dag_run_id={encoded}" in log_url
 
 
 def test_resolve_and_validate_precedence(monkeypatch: pytest.MonkeyPatch):

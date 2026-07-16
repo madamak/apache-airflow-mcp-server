@@ -1,50 +1,241 @@
-name: Publish to PyPI
+name: Release
 
+# A semver tag is the release candidate. All validation and publication stays
+# in this workflow run; the human-facing GitHub Release is created last.
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
+  validate-ref:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release tag
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release tag must match vMAJOR.MINOR.PATCH, got: $TAG" >&2
+            exit 1
+          fi
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "release tag must point to a commit on main" >&2
+            exit 1
+          fi
+          set +e
+          release_response="$(
+            gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>&1
+          )"
+          release_status=$?
+          set -e
+          if [[ "$release_status" == "0" ]]; then
+            echo "a GitHub Release already exists for $TAG; aborting before publication" >&2
+            exit 1
+          elif ! grep -Eq '^HTTP/[0-9.]+ 404 ' <<< "$release_response"; then
+            echo "could not confirm that no GitHub Release exists for $TAG" >&2
+            echo "$release_response" >&2
+            exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+  quality:
+    needs: validate-ref
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  e2e:
+    needs: validate-ref
+    uses: ./.github/workflows/e2e.yml
+    permissions:
+      contents: read
+
   build:
+    needs: validate-ref
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required for hatch-vcs to determine version from tags
-
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
-        run: uv sync --frozen --group dev
-
-      - name: Run tests
-        run: uv run pytest
-
-      - name: Run lint
-        run: uv run ruff check .
-
       - name: Build package
         run: uv build
-
-      - name: Upload dist artifacts
+      - name: Upload distribution
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  wheel-test:
+    needs: [validate-ref, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - client: apache-airflow-client==2.10.0
+            api-version: v1
+          - client: apache-airflow-client==3.3.0
+            api-version: v2
+    steps:
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist
+      - name: Install exact release wheel
+        env:
+          CLIENT: ${{ matrix.client }}
+        run: |
+          uv venv "$RUNNER_TEMP/release-venv"
+          uv pip install --python "$RUNNER_TEMP/release-venv/bin/python" \
+            "$RUNNER_TEMP"/dist/*.whl "$CLIENT"
+      - name: Verify artifact version, imports, and console protocol
+        env:
+          AIRFLOW_MCP_API_VERSION: ${{ matrix.api-version }}
+          AIRFLOW_MCP_HOST: https://airflow.invalid
+          AIRFLOW_MCP_READ_ONLY: "true"
+          AIRFLOW_MCP_TOKEN: test-only-token
+          EXPECTED_VERSION: ${{ needs.validate-ref.outputs.version }}
+        run: |
+          cd "$RUNNER_TEMP"
+          export AIRFLOW_MCP_BIN="$RUNNER_TEMP/release-venv/bin/airflow-mcp"
+          "$RUNNER_TEMP/release-venv/bin/python" - <<'PY'
+          import asyncio
+          import importlib.metadata
+          import os
+          from pathlib import Path
+
+          import airflow_mcp
+          from fastmcp import Client
+          from fastmcp.client.transports import StdioTransport
+
+          venv = Path(os.environ["RUNNER_TEMP"]) / "release-venv"
+          module_path = Path(airflow_mcp.__file__).resolve()
+          assert module_path.is_relative_to(venv.resolve()), module_path
+          assert importlib.metadata.version("apache-airflow-mcp-server") == os.environ[
+              "EXPECTED_VERSION"
+          ]
+
+          async def verify_console() -> None:
+              child_env = dict(os.environ)
+              child_env.pop("PYTHONPATH", None)
+              child_env.pop("VIRTUAL_ENV", None)
+              transport = StdioTransport(
+                  command=os.environ["AIRFLOW_MCP_BIN"],
+                  args=["--transport", "stdio"],
+                  env=child_env,
+              )
+              async with Client(transport) as client:
+                  tools = {tool.name for tool in await client.list_tools()}
+              assert "airflow_list_dags" in tools
+              assert "airflow_clear_dag_run" not in tools
+
+          asyncio.run(verify_console())
+          PY
+
+  publish-ghcr:
+    needs: [validate-ref, quality, e2e, build, wheel-test]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconfirm GitHub Release does not exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set +e
+          release_response="$(
+            gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>&1
+          )"
+          release_status=$?
+          set -e
+          if [[ "$release_status" == "0" ]]; then
+            echo "a GitHub Release appeared for $TAG; aborting before publication" >&2
+            exit 1
+          elif ! grep -Eq '^HTTP/[0-9.]+ 404 ' <<< "$release_response"; then
+            echo "could not reconfirm that no GitHub Release exists for $TAG" >&2
+            echo "$release_response" >&2
+            exit 1
+          fi
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.validate-ref.outputs.version }}
 
   publish-pypi:
-    needs: build
+    needs: [validate-ref, build, publish-ghcr]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write  # Required for trusted publishing
+      contents: read
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-github-release:
+    needs: [build, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --verify-tag --generate-notes

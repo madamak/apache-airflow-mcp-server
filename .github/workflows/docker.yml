@@ -1,8 +1,7 @@
-name: Docker
+name: Docker build
 
+# Release images are published only by publish.yml after all release gates pass.
 on:
-  release:
-    types: [published]
   push:
     branches: ["main"]
     paths:
@@ -10,53 +9,27 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "src/**"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+      - ".github/workflows/docker.yml"
 
-concurrency:
-  group: docker-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
-  publish-image:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          # `latest` follows releases (metadata-action's latest=auto on semver tags);
-          # main pushes only move `edge`.
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=edge,enable={{is_default_branch}}
-
-      # .git is excluded from the Docker build context, so hatch-vcs cannot
-      # derive the version there; compute it from the release tag instead.
-      - name: Compute package version
-        if: github.event_name == 'release'
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
-
-      - name: Build and push
+      - name: Build image without publishing
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: false
           build-args: |
-            VERSION=${{ env.PKG_VERSION || '0.0.0' }}
+            VERSION=0.0.0

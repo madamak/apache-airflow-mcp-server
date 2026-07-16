@@ -189,12 +189,19 @@ git branch -m main
 - `docs/RELEASE_PLAN.md` (can delete after release, or keep for history)
 
 ### Automated PyPI publishing
-- GitHub releases now trigger `.github/workflows/publish.yml`, which installs deps, runs `uv run pytest` and `uv run ruff check .`, builds the wheel via `uv build`, and uses trusted publishing to push to PyPI as `apache-airflow-mcp-server`.
+- A strict `vMAJOR.MINOR.PATCH` tag triggers `.github/workflows/publish.yml`.
+  The workflow verifies that the tagged commit is on `main`, runs quality and
+  live Airflow 2/3 gates, builds and smoke-tests the exact distribution, then
+  publishes GHCR and PyPI. It creates the human-facing GitHub Release last.
 - Action items before cutting a release tag:
-  1. Ensure `main` is green in CI (same test + lint suite).
-  2. Update `pyproject.toml` version (via tag, since hatch-vcs derives it) and add release notes.
-  3. Create a GitHub release (`vX.Y.Z`). When it flips to `published`, the workflow promotes the artifact automatically—no manual `twine upload`.
-- Releases created from commits that skipped CI will be blocked by the workflow because tests run again during publication—do **not** bypass them.
+  1. Ensure the intended commit is merged to `main` and its CI is green.
+  2. Finalize `CHANGELOG.md`; hatch-vcs derives the package version from the tag.
+  3. Create and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+  4. Monitor the single Release workflow through both protected publication
+     environments.
+- **Do not create the GitHub Release manually.** An existing release causes the
+  workflow to fail closed; publication is intentionally owned by the tag-driven
+  workflow so the Release cannot appear before its artifacts pass every gate.
 
 ---
 

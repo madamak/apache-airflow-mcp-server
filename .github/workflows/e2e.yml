@@ -1,0 +1,42 @@
+name: E2E
+
+# Spawns a real Airflow in Docker, seeds it with DAG runs (including failures),
+# and drives every MCP tool against it via scripts/e2e.sh.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/e2e.sh"
+      - ".github/workflows/e2e.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+  schedule:
+    # Nightly: reruns the pinned compatibility pairs against runner/dependency drift.
+    - cron: "17 4 * * *"
+  workflow_call:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ["af2", "af3"]
+    env:
+      E2E_COMPOSE_PROJECT: airflow-mcp-e2e-${{ matrix.entry }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+      - name: Run E2E suite (${{ matrix.entry }})
+        env:
+          # The harness prints project-scoped logs before tearing down on failure;
+          # its temporary registry and bearer token never survive the step.
+          E2E_DUMP_LOGS_ON_FAILURE: "1"
+        run: ./scripts/e2e.sh ${{ matrix.entry }}

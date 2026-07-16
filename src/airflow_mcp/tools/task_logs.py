@@ -165,24 +165,26 @@ def _format_structured_log_entry(entry: Any) -> str:
 def _coerce_log_text(response: Any, api_family: str = "v1") -> str:
     """Coerce Airflow log responses into a single string."""
 
-    if isinstance(response, str):
-        # Detect python-repr style list of tuples (common in some Airflow versions)
-        # e.g. "[('host', 'log'), ...]"
-        if response.strip().startswith("[('"):
+    content = response
+    if not isinstance(content, str):
+        content = getattr(response, "content", response)
+        # Airflow 3 clients wrap the anyOf content payload (List[StructuredLogMessage] |
+        # List[str]) in a model carrying the parsed value as `actual_instance`.
+        if hasattr(content, "actual_instance"):
+            content = content.actual_instance
+
+    if isinstance(content, str):
+        # Detect python-repr style host-segmented content — Airflow 2 returns the
+        # JSON `content` field as "[('host', 'log'), ...]" with escaped newlines.
+        if content.strip().startswith("[('"):
             try:
                 # Safe evaluation of python literals
-                parsed = ast.literal_eval(response)
+                parsed = ast.literal_eval(content)
                 if isinstance(parsed, (list, tuple)):
                     return _flatten_log_segments(parsed)
             except (ValueError, SyntaxError):
                 pass  # Not a valid literal, treat as raw string
-        return response
-
-    content = getattr(response, "content", response)
-    # Airflow 3 clients wrap the anyOf content payload (List[StructuredLogMessage] |
-    # List[str]) in a model carrying the parsed value as `actual_instance`.
-    if hasattr(content, "actual_instance"):
-        content = content.actual_instance
+        return content
     if isinstance(content, bytes):
         return content.decode("utf-8", errors="replace")
     if isinstance(content, (list, tuple)):

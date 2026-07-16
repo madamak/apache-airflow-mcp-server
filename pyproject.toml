@@ -27,8 +27,8 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    # 2.x client for Airflow 2 (API v1); 3.x client for Airflow 3 (API v2).
-    # Pin the major matching your Airflow: pip install 'apache-airflow-client<3' for Airflow 2.
+    # Generated client models can drift within a major. Users should pin the
+    # client release matching their Airflow deployment (README compatibility table).
     "apache-airflow-client>=2.7.0,<4.0.0",
     "fastmcp>=3.0.0,<4.0.0",
     "pydantic>=2.7,<3.0",
@@ -89,6 +89,7 @@ markers = [
   "unit: fast, isolated tests",
   "integration: tests requiring external services or IO",
   "functional: end-to-end style tests",
+  "e2e: tests against a live Airflow instance (run via scripts/e2e.sh; auto-skipped otherwise)",
   "manual: excluded by default",
 ]
 pythonpath = ["src"]

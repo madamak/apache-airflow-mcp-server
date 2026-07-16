@@ -629,10 +629,10 @@ def clear_task_instances(
     include_downstream: bool | None = None,
     include_future: bool | None = None,
     include_past: bool | None = None,
-    dry_run: bool | None = None,
+    dry_run: bool | None = True,
     reset_dag_runs: bool | None = None,
 ) -> dict[str, Any]:
-    """Clear task instances with optional filters."""
+    """Clear task instances with optional filters; dry-run unless explicitly disabled."""
     with operation_logger(
         "airflow_clear_task_instances",
         instance=instance,
@@ -679,6 +679,7 @@ def clear_task_instances(
 
         start_date_value = _parse_iso_datetime("start_date", start_date)
         end_date_value = _parse_iso_datetime("end_date", end_date)
+        effective_dry_run = True if dry_run is None else dry_run
 
         if _factory.get_api_family(resolved.instance) == "v2":
             # Airflow 3: endpoint moved to the task instances API. SubDAGs no longer
@@ -699,7 +700,7 @@ def clear_task_instances(
                 include_downstream=include_downstream,
                 include_future=include_future,
                 include_past=include_past,
-                dry_run=dry_run if dry_run is not None else False,
+                dry_run=effective_dry_run,
                 reset_dag_runs=reset_dag_runs,
             )
             api = _factory.get_task_instances_api(resolved.instance)
@@ -715,7 +716,7 @@ def clear_task_instances(
                 include_downstream=include_downstream,
                 include_future=include_future,
                 include_past=include_past,
-                dry_run=dry_run if dry_run is not None else False,
+                dry_run=effective_dry_run,
                 reset_dag_runs=reset_dag_runs,
             )
             api = _factory.get_dags_api(resolved.instance)
@@ -739,5 +740,9 @@ def clear_task_instances(
         cleared_payload = response_payload
         if isinstance(response_payload, dict) and "cleared" in response_payload:
             cleared_payload = response_payload["cleared"]
-        payload = {"dag_id": dag_id_value, "cleared": cleared_payload}
+        payload = {
+            "dag_id": dag_id_value,
+            "dry_run": effective_dry_run,
+            "cleared": cleared_payload,
+        }
         return op.success(_json_safe(payload))

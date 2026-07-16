@@ -1,0 +1,28 @@
+# E2E environment: Airflow 3.x standalone (SQLite + the default executor).
+# The simple auth manager is development-only and intentionally configured with
+# deterministic admin/admin credentials for this loopback-bound test service.
+services:
+  airflow:
+    image: ${AIRFLOW_IMAGE:-apache/airflow:3.3.0}
+    command:
+      - bash
+      - -c
+      - |
+        printf '{"admin":"admin"}\n' > /opt/airflow/simple_auth_manager_passwords.json
+        exec airflow standalone
+    ports:
+      - "127.0.0.1:${AIRFLOW_HOST_PORT:-18081}:8080"
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/simple_auth_manager_passwords.json
+      AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "5"
+      AIRFLOW__DAG_PROCESSOR__MIN_FILE_PROCESS_INTERVAL: "5"
+    volumes:
+      - ../dags:/opt/airflow/dags:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 30s

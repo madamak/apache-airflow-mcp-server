@@ -158,7 +158,13 @@ def _install_fake_airflow_client(monkeypatch: pytest.MonkeyPatch):
         def __init__(self, api_client: ApiClient) -> None:  # noqa: D401
             self._c = api_client
 
-        def get_dataset_events(self, limit: int = 50, uri: str | None = None):  # noqa: D401
+        def get_dataset(self, uri: str):  # noqa: D401
+            self._last_uri = uri
+            return _Obj(id=42, uri=uri)
+
+        def get_dataset_events(self, limit: int = 50, dataset_id: int | None = None):  # noqa: D401
+            assert dataset_id == 42, "events must be filtered by the resolved dataset_id"
+            uri = self._last_uri
             return _Obj(
                 dataset_events=[_Obj(uri=uri, event="E1"), _Obj(uri=uri, event="E2")],
                 total_entries=2,
@@ -771,6 +777,36 @@ def test_task_logs_host_segment_flatten(monkeypatch: pytest.MonkeyPatch):
     assert "ERROR boom" in payload["log"]
 
 
+def test_task_logs_unwraps_airflow2_tuple_repr_from_response_content(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression: the real v1 client puts tuple-repr text in ``response.content``."""
+    from airflow_mcp import client_factory as cf
+
+    *_, apis = cf._import_airflow_client()  # type: ignore[attr-defined]
+
+    def _fake_get_log(self, dag_id: str, dag_run_id: str, task_id: str, try_number: int):  # noqa: D401
+        return _Obj(
+            content="[('worker-1.example', 'INFO before\\nERROR exploded\\nINFO after\\n')]"
+        )
+
+    monkeypatch.setattr(apis.TaskInstanceApi, "get_log", _fake_get_log)
+
+    out = airflow_tools.get_task_instance_logs(
+        instance="data-stg",
+        dag_id="dag_a",
+        dag_run_id="dr1",
+        task_id="t1",
+        try_number=1,
+        filter_level="error",
+        context_lines=1,
+    )
+    payload = _payload(out)
+    assert payload["match_count"] == 1
+    assert payload["returned_lines"] == 3
+    assert payload["log"].splitlines() == ["INFO before", "ERROR exploded", "INFO after"]
+
+
 def test_task_logs_bytes_response(monkeypatch: pytest.MonkeyPatch):
     from airflow_mcp import client_factory as cf
 
@@ -990,6 +1026,49 @@ def test_dataset_events():
     payload = _payload(out)
     assert payload["count"] == 2
     assert payload["events"][0]["uri"] == "dataset://abc"
+
+
+def test_dataset_events_airflow2_lookup_404_is_not_found(monkeypatch: pytest.MonkeyPatch):
+    from airflow_mcp import client_factory as cf
+
+    *_, apis = cf._import_airflow_client()  # type: ignore[attr-defined]
+
+    def _missing_dataset(self, uri: str):  # noqa: D401
+        raise AirflowApiException(status=404, reason="Not Found")
+
+    monkeypatch.setattr(apis.DatasetApi, "get_dataset", _missing_dataset)
+
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.dataset_events(instance="data-stg", dataset_uri="dataset://missing")
+    assert exc.value.code == "NOT_FOUND"
+    assert exc.value.context["dataset_uri"] == "dataset://missing"
+    assert exc.value.context["status"] == 404
+
+
+def test_dataset_events_airflow2_dataset_without_id_is_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from airflow_mcp import client_factory as cf
+
+    *_, apis = cf._import_airflow_client()  # type: ignore[attr-defined]
+    events_called = False
+
+    def _dataset_without_id(self, uri: str):  # noqa: D401
+        return _Obj(uri=uri)
+
+    def _unexpected_events_call(self, **kwargs):  # noqa: D401
+        nonlocal events_called
+        events_called = True
+        return _Obj(dataset_events=[])
+
+    monkeypatch.setattr(apis.DatasetApi, "get_dataset", _dataset_without_id)
+    monkeypatch.setattr(apis.DatasetApi, "get_dataset_events", _unexpected_events_call)
+
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.dataset_events(instance="data-stg", dataset_uri="dataset://missing-id")
+    assert exc.value.code == "NOT_FOUND"
+    assert exc.value.context == {"dataset_uri": "dataset://missing-id"}
+    assert events_called is False
 
 
 def test_list_dag_runs_invalid_identifier():

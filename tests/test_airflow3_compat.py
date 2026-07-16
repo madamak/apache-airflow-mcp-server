@@ -102,13 +102,15 @@ class _DagRunApi:
         }
         return _Obj(dag_run_id="manual__triggered", state="queued")
 
-    def clear_dag_run(self, dag_id, dag_run_id, dag_run_clear_body=None):
+    def clear_dag_run_without_preload_content(self, dag_id, dag_run_id, dag_run_clear_body=None):
         self._c.calls["clear_dag_run"] = {
             "dag_id": dag_id,
             "dag_run_id": dag_run_id,
             "body": dag_run_clear_body,
+            "raw": True,
         }
-        return _Obj(task_instances=[], total_entries=0)
+        body = {"task_instances": [], "total_entries": 0}
+        return SimpleNamespace(status=200, reason="OK", data=json.dumps(body).encode("utf-8"))
 
 
 class _TaskInstanceApi:
@@ -427,6 +429,63 @@ def test_clear_dag_run_uses_v2_body(v2_instance: str):
     client = cf.get_client_factory().get_api_client(v2_instance)
     call = client.calls["clear_dag_run"]
     assert _field(call["body"], "dry_run") is True
+    assert call["raw"] is True
+
+
+def test_clear_dag_run_raw_404_is_normalized_and_releases_connection(
+    v2_instance: str, monkeypatch: pytest.MonkeyPatch
+):
+    released = False
+
+    class RawResponse:
+        status = 404
+        reason = "Not Found"
+        data = b'{"detail":"missing run"}'
+
+        def release_conn(self):
+            nonlocal released
+            released = True
+
+    monkeypatch.setattr(
+        _DagRunApi,
+        "clear_dag_run_without_preload_content",
+        lambda self, *args, **kwargs: RawResponse(),
+    )
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.clear_dag_run(
+            instance=v2_instance, dag_id="etl", dag_run_id="missing", dry_run=False
+        )
+    assert exc.value.code == "NOT_FOUND"
+    assert exc.value.context["status"] == 404
+    assert released is True
+
+
+def test_clear_dag_run_invalid_raw_json_is_masked_and_releases_connection(
+    v2_instance: str, monkeypatch: pytest.MonkeyPatch
+):
+    released = False
+
+    class RawResponse:
+        status = 200
+        reason = "OK"
+        data = b"not-json"
+
+        def release_conn(self):
+            nonlocal released
+            released = True
+
+    monkeypatch.setattr(
+        _DagRunApi,
+        "clear_dag_run_without_preload_content",
+        lambda self, *args, **kwargs: RawResponse(),
+    )
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.clear_dag_run(
+            instance=v2_instance, dag_id="etl", dag_run_id="run_1", dry_run=True
+        )
+    assert exc.value.code == "INTERNAL_ERROR"
+    assert "invalid JSON" in str(exc.value)
+    assert released is True
 
 
 def test_clear_task_instances_moved_to_task_instance_api(v2_instance: str):
@@ -439,6 +498,24 @@ def test_clear_task_instances_moved_to_task_instance_api(v2_instance: str):
     call = client.calls["post_clear_task_instances"]
     assert _field(call["body"], "task_ids") == ["extract"]
     assert _field(call["body"], "dry_run") is True
+
+
+def test_clear_operations_default_to_dry_run_on_v2(v2_instance: str):
+    run_payload = _payload(
+        airflow_tools.clear_dag_run(instance=v2_instance, dag_id="etl", dag_run_id="run_1")
+    )
+    task_payload = _payload(
+        airflow_tools.clear_task_instances(
+            instance=v2_instance,
+            dag_id="etl",
+            task_ids=["extract"],
+        )
+    )
+    client = cf.get_client_factory().get_api_client(v2_instance)
+    assert _field(client.calls["clear_dag_run"]["body"], "dry_run") is True
+    assert _field(client.calls["post_clear_task_instances"]["body"], "dry_run") is True
+    assert run_payload["dry_run"] is True
+    assert task_payload["dry_run"] is True
 
 
 def test_clear_dag_run_rejects_unsupported_options_on_v2(v2_instance: str):

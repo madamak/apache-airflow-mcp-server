@@ -81,6 +81,19 @@ def test_clear_task_instances_normalizes_payload():
     assert getattr(clear_model, "dry_run", None) is True
 
 
+def test_clear_task_instances_defaults_to_dry_run():
+    payload = _payload(
+        airflow_tools.clear_task_instances(
+            instance="data-stg",
+            dag_id="dag_a",
+            task_ids=["task_a"],
+        )
+    )
+    client = _get_cached_api_client("data-stg")
+    assert getattr(client.last_clear_task_instances, "dry_run", None) is True
+    assert payload["dry_run"] is True
+
+
 def test_clear_task_instances_invalid_ids():
     with pytest.raises(AirflowToolError) as exc:
         airflow_tools.clear_task_instances(
@@ -115,6 +128,23 @@ def test_clear_dag_run_clears_all_tasks():
             or getattr(clear_model, "include_upstream", None) is None
         )
         assert getattr(clear_model, "dry_run", None) is False
+
+
+def test_clear_dag_run_defaults_to_dry_run():
+    payload = _payload(
+        airflow_tools.clear_dag_run(
+            instance="data-stg",
+            dag_id="dag_a",
+            dag_run_id="dr1",
+        )
+    )
+    client = _get_cached_api_client("data-stg")
+    clear_model = client.last_clear_dag_run
+    if isinstance(clear_model, dict):
+        assert clear_model["dry_run"] is True
+    else:
+        assert getattr(clear_model, "dry_run", None) is True
+    assert payload["dry_run"] is True
 
 
 def test_clear_dag_run_with_extended_params(monkeypatch: pytest.MonkeyPatch):

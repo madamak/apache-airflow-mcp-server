@@ -73,3 +73,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# E2E harness scratch (generated instances.yaml)
+tests/e2e/.tmp/

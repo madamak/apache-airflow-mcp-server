@@ -3,22 +3,24 @@
 [![MCP](https://img.shields.io/badge/MCP-Server-blueviolet)](https://modelcontextprotocol.io)
 [![PyPI](https://img.shields.io/pypi/v/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
 [![Python](https://img.shields.io/pypi/pyversions/apache-airflow-mcp-server)](https://pypi.org/project/apache-airflow-mcp-server/)
-[![Airflow](https://img.shields.io/badge/Airflow-2.5%E2%80%932.11%20%7C%203.x-017CEE?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/)
+[![Airflow](https://img.shields.io/badge/live--tested-2.11%20%7C%203.3-017CEE?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/)
 [![CI](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/madamak/apache-airflow-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
+> Independent community project; not affiliated with or endorsed by the Apache Software Foundation.
+
 Connect Claude, Cursor, and any [MCP](https://modelcontextprotocol.io) client to your Apache Airflow deployments — and let AI agents debug failed DAGs for you.
 
-Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this fail?"* — the agent resolves the URL, finds the failed tasks, pulls the error lines from the logs (server-side filtered so it doesn't blow the context window), and can re-trigger or clear runs — write tools carry destructive-operation annotations, so MCP clients that honor them (Claude Code and Claude Desktop do) ask for your approval first.
+Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this fail?"* — the agent resolves the URL, finds the failed tasks, pulls the error lines from the logs (server-side filtered so it doesn't blow the context window), and can re-trigger or clear runs. Write tools carry destructive-operation annotations that MCP clients can use to request confirmation.
 
 ## Highlights
 
 - 🔍 **Incident-response first** — resolve Airflow UI URLs straight to the failing task, filter logs by error level with context lines, follow `try_number` semantics correctly (sensors included)
-- 🏢 **Multi-instance** — one server for dev/staging/prod across teams, with per-instance credentials and an SSRF guard that rejects unknown hosts
-- 🔒 **Safety controls** — opt-in read-only mode (`AIRFLOW_MCP_READ_ONLY=true`) that never registers write tools; write tools annotated as destructive so clients that honor annotations prompt for confirmation; secrets never logged or echoed
+- 🏢 **Multi-instance** — one server for same-API-family dev/staging/prod targets, with per-instance credentials and an SSRF guard that rejects unknown hosts
+- 🔒 **Safety controls** — opt-in read-only mode (`AIRFLOW_MCP_READ_ONLY=true`) that never registers write tools; write tools annotated as destructive; configured credentials are redacted from instance responses and operation logs
 - 📉 **Token-efficient** — log tailing, level filtering, byte caps, and truncation metadata designed for LLM context windows
-- 🧭 **Airflow 2 and 3** — Airflow 2.5–2.11 (API v1) fully supported; Airflow 3 (API v2) supported experimentally, including JWT auth
+- 🧭 **Airflow 2 and 3** — API v1/v2 adapters with live E2E against Airflow 2.11 and 3.3, including JWT auth
 - 📎 **Traceable** — every response carries a `request_id` that matches the structured server logs
 
 ## Quickstart
@@ -26,10 +28,11 @@ Paste an Airflow UI link from a PagerDuty/Datadog alert and ask *"why did this f
 ### 1. Install
 
 ```bash
-uv tool install apache-airflow-mcp-server   # or: pip install apache-airflow-mcp-server
+uv tool install apache-airflow-mcp-server \
+  --with 'apache-airflow-client==3.3.0'  # replace 3.3.0 with your Airflow version
 ```
 
-> **Airflow 2 (2.5–2.11)?** Install with the matching client: `uv tool install apache-airflow-mcp-server --with 'apache-airflow-client<3'` — see [Airflow compatibility](#airflow-compatibility). A plain install targets Airflow 3.
+> **Airflow 2.11?** Use `--with 'apache-airflow-client==2.10.0'` instead; 2.10.0 is the final generated v1 client and targets Airflow 2's stable API. See [Airflow compatibility](#airflow-compatibility) before using a different release.
 
 ### 2. Connect your MCP client
 
@@ -43,7 +46,8 @@ claude mcp add airflow \
   --env AIRFLOW_MCP_HOST=https://airflow.example.com \
   --env AIRFLOW_MCP_USERNAME=admin \
   --env AIRFLOW_MCP_PASSWORD=your-password \
-  -- uvx --from apache-airflow-mcp-server airflow-mcp --transport stdio
+  -- uvx --from apache-airflow-mcp-server \
+  --with apache-airflow-client==3.3.0 airflow-mcp --transport stdio
 ```
 </details>
 
@@ -57,7 +61,7 @@ Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
   "mcpServers": {
     "airflow": {
       "command": "uvx",
-      "args": ["--from", "apache-airflow-mcp-server", "airflow-mcp", "--transport", "stdio"],
+      "args": ["--from", "apache-airflow-mcp-server", "--with", "apache-airflow-client==3.3.0", "airflow-mcp", "--transport", "stdio"],
       "env": {
         "AIRFLOW_MCP_HOST": "https://airflow.example.com",
         "AIRFLOW_MCP_USERNAME": "admin",
@@ -79,7 +83,7 @@ Add to `~/.cursor/mcp.json`:
   "mcpServers": {
     "airflow": {
       "command": "uvx",
-      "args": ["--from", "apache-airflow-mcp-server", "airflow-mcp", "--transport", "stdio"],
+      "args": ["--from", "apache-airflow-mcp-server", "--with", "apache-airflow-client==3.3.0", "airflow-mcp", "--transport", "stdio"],
       "env": {
         "AIRFLOW_MCP_HOST": "https://airflow.example.com",
         "AIRFLOW_MCP_USERNAME": "admin",
@@ -102,7 +106,7 @@ Add to `.vscode/mcp.json`:
     "airflow": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "apache-airflow-mcp-server", "airflow-mcp", "--transport", "stdio"],
+      "args": ["--from", "apache-airflow-mcp-server", "--with", "apache-airflow-client==3.3.0", "airflow-mcp", "--transport", "stdio"],
       "env": {
         "AIRFLOW_MCP_HOST": "https://airflow.example.com",
         "AIRFLOW_MCP_USERNAME": "admin",
@@ -138,26 +142,40 @@ Health check: `GET /health` → `200 OK`.
 >
 > *"https://airflow.example.com/dags/etl_pipeline/grid — what happened here, and is it safe to clear?"*
 >
-> *"Pause every DAG owned by data-eng on staging."*
+> *"Preview clearing the failed task from that alert, then explain what would rerun."*
 
 ## Airflow compatibility
 
-The server talks to Airflow through the official `apache-airflow-client`, and supports both client majors. A plain install resolves the newest client (3.x, for Airflow 3); Airflow 2 users pin the 2.x client alongside:
+The server talks to Airflow through the generated `apache-airflow-client`.
+For Airflow 3, match the client release to your Airflow release: generated
+models can change within a major version, and a newer client is not guaranteed
+to deserialize an older server's responses correctly. Airflow 2.11 uses the
+final v1 client release, 2.10.0, against Airflow 2's stable API.
 
-| Your Airflow | REST API | Install | Status |
+| Your Airflow | REST API | Install | Live E2E status |
 |---|---|---|---|
-| 3.x | v2 | `uv tool install apache-airflow-mcp-server` (plain install) | 🧪 Experimental |
-| 2.5 – 2.11 | v1 | `uv tool install apache-airflow-mcp-server --with 'apache-airflow-client<3'` (or `pip install apache-airflow-mcp-server 'apache-airflow-client<3'`) | ✅ Stable |
+| 3.3 | v2 | `uv tool install apache-airflow-mcp-server --with 'apache-airflow-client==3.3.0'` | ✅ 3.3.0 |
+| 2.11 | v1 | `uv tool install apache-airflow-mcp-server --with 'apache-airflow-client==2.10.0'` | ✅ Airflow 2.11 + final v1 client 2.10.0 |
+| 3.0–3.2 | v2 | Pin the client to the deployed Airflow 3 version | 🧪 Not in the current live matrix |
+| 2.5–2.10 | v1 | Use the final v1 client, `apache-airflow-client==2.10.0` | 🧪 Not in the current live matrix |
 
-When `api_version` isn't set, the server assumes the API matching the installed client (`v1` for the 2.x client, `v2` for 3.x), so the pairings above work with no further configuration. Set `AIRFLOW_MCP_API_VERSION` (or `api_version:` per instance in the registry YAML) to `v1`/`v2` explicitly if you want to be sure — a mismatch between the client and the instance produces an error explaining exactly which client to install.
+When `api_version` isn't set, the server assumes the API matching the installed
+client (`v1` for a 2.x client, `v2` for 3.x). Set
+`AIRFLOW_MCP_API_VERSION` (or `api_version:` in the registry) explicitly to
+catch a major-version mismatch early.
+
+One server process can currently load only one generated client major. All
+instances in a registry must therefore use the same API family; run separate
+MCP server processes for Airflow 2 and Airflow 3. Mixed-version support requires
+a future client-adapter change and is not advertised as working today.
 
 Airflow 3 notes:
 
 - **Auth**: bearer tokens are passed through as JWTs; basic credentials are automatically exchanged for a JWT via `POST /auth/token` and refreshed periodically (`AIRFLOW_MCP_TOKEN_REFRESH_SECONDS`, default 3600 — keep it below your deployment's JWT expiry, and note there is no automatic re-auth on 401 yet).
-- `execution_date` ordering maps to `logical_date`, datasets map to assets, and UI links use the Airflow 3 route scheme — tool inputs/outputs stay the same.
+- `execution_date` ordering maps to `logical_date`, datasets map to assets, and UI links use the Airflow 3 route scheme. Tool names and the core workflow stay stable; documented fields and options can differ by API family.
 - Clear options that no longer exist in Airflow 3 (`include_subdags`/`include_parentdag`, and the `include_*`/`reset_dag_runs` options of `airflow_clear_dag_run`) are rejected with `INVALID_INPUT` rather than silently narrowing a destructive operation.
 
-Both client majors are exercised in CI on every commit. Bug reports from real Airflow 3 deployments are very welcome!
+Both client families are exercised on relevant pull requests and main pushes. Bug reports from real Airflow deployments are very welcome!
 
 ## Configuration
 
@@ -187,12 +205,12 @@ data-stg:
     username: ${AIRFLOW_DATA_STG_USERNAME}
     password: ${AIRFLOW_DATA_STG_PASSWORD}
 
-ml-prod:
-  host: https://airflow.ml-prod.example.com/
-  api_version: v2        # Airflow 3
+data-prod:
+  host: https://airflow.data-prod.example.com/
+  api_version: v1        # Keep one client/API family per server process
   auth:
     type: bearer
-    token: ${AIRFLOW_ML_PROD_TOKEN}
+    token: ${AIRFLOW_DATA_PROD_TOKEN}
 ```
 
 Every tool accepts either an `instance` key (`data-stg`) or a `ui_url` — a full http(s) Airflow UI URL whose host is resolved against the registry, with unknown hosts rejected (SSRF guard). `ui_url` also auto-fills `dag_id`/`dag_run_id`/`task_id` when the link contains them. If both `instance` and `ui_url` are passed and disagree, the call fails with `INSTANCE_MISMATCH` rather than guessing.
@@ -214,7 +232,7 @@ Every tool accepts either an `instance` key (`data-stg`) or a `ui_url` — a ful
 
 ### Read-only mode
 
-Pointing an AI agent at production? Set `AIRFLOW_MCP_READ_ONLY=true` and the write tools (trigger, clear, pause/unpause) are never registered — the agent can inspect everything but change nothing. Even with writes enabled, write tools carry MCP `destructiveHint` annotations so well-behaved clients ask for confirmation first.
+Pointing an AI agent at production? Set `AIRFLOW_MCP_READ_ONLY=true` and the write tools (trigger, clear, pause/unpause) are never registered. This prevents MCP mutations, but read tools can still disclose sensitive logs, configuration, rendered fields, and DAG-run data; use least-privilege Airflow credentials. With writes enabled, tools carry MCP `destructiveHint` annotations that clients can use when deciding whether to request confirmation.
 
 ## Tools
 
@@ -244,8 +262,8 @@ Pointing an AI agent at production? Set `AIRFLOW_MCP_READ_ONLY=true` and the wri
 | Tool | Description |
 |---|---|
 | `airflow_trigger_dag` | Trigger a run with optional conf/logical date/note |
-| `airflow_clear_task_instances` | Clear task instances across runs (supports `dry_run`) |
-| `airflow_clear_dag_run` | Clear a whole run (supports `dry_run`) |
+| `airflow_clear_task_instances` | Clear task instances across runs (`dry_run=true` by default) |
+| `airflow_clear_dag_run` | Clear a whole run (`dry_run=true` by default) |
 | `airflow_pause_dag` / `airflow_unpause_dag` | Toggle DAG scheduling |
 
 Every success payload includes a `request_id` for log correlation; failures raise a structured `ToolError` with `{code, message, request_id, context}`.
@@ -278,14 +296,17 @@ airflow_get_task_instance_logs(dag_id="etl_pipeline",
 
 Log responses include `truncated`, `auto_tailed` (logs >100MB tail automatically), `match_count`, and byte/line stats so the agent knows exactly what it's looking at. Host-segmented logs are flattened with `--- [worker-1] ---` headers; Airflow 3 structured logs are rendered as plain lines.
 
-> **Note on `try_number`:** sensors increment it on every reschedule, so treat it as an attempt index. Always read it from `airflow_get_task_instance` rather than guessing — the derived `retries_consumed`/`retries_remaining` fields are heuristics.
+> **Note on `try_number`:** reschedule-mode sensors could increment it on every
+> reschedule through Airflow 2.9; Airflow 2.10+ no longer does. Always read it
+> from `airflow_get_task_instance` rather than guessing—the derived
+> `retries_consumed`/`retries_remaining` fields are heuristics.
 
 ## Deployment
 
 ### Docker
 
 ```bash
-docker run -p 8765:8765 \
+docker run -p 127.0.0.1:8765:8765 \
   -e AIRFLOW_MCP_HOST=https://airflow.example.com \
   -e AIRFLOW_MCP_USERNAME=admin \
   -e AIRFLOW_MCP_PASSWORD=your-password \
@@ -294,7 +315,12 @@ docker run -p 8765:8765 \
 
 Or build locally with `docker build -t airflow-mcp .`
 
-The container serves streamable HTTP on `:8765` (`/mcp` endpoint, `/health` for probes). Mount a registry YAML for multi-instance setups.
+The release image contains the lockfile's Airflow 3.3 client and serves
+streamable HTTP on `:8765` (`/mcp` endpoint, `/health` for probes). The MCP HTTP
+endpoint has no built-in caller authentication: keep it loopback-bound or place
+it behind an authenticated private proxy. Mount a same-API-family registry YAML
+for multi-instance setups. Airflow 2 deployments should use the pinned local
+installation path above until a separate v1 image is published.
 
 ### FastMCP tooling
 
@@ -304,21 +330,25 @@ A `fastmcp.json` is included so FastMCP-aware tooling can auto-discover the entr
 
 ```bash
 uv sync                 # install dependencies
-uv run pytest           # tests (no real network; the Airflow client is mocked)
+uv run pytest           # unit tests (no real network; the Airflow client is mocked)
 uv run ruff check .     # lint
 uv run ruff format .    # format
 uv run airflow-mcp --transport stdio   # run locally
+./scripts/e2e.sh af2    # end-to-end against Airflow 2.11
+./scripts/e2e.sh af3    # end-to-end against Airflow 3.3
+                        # Both seed failures/noisy logs and drive every tool
+                        # through MCP. Set E2E_KEEP=1 to keep the instance up.
 ```
 
-CI runs the suite against both `apache-airflow-client` majors on Python 3.10/3.12/3.13. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [AGENTS.md](AGENTS.md) if you're pointing a coding agent at this repo (it's written for that).
+CI runs the unit suite against both `apache-airflow-client` families on Python 3.10–3.13. Relevant pull requests, main pushes, nightly runs, and releases also exercise live dockerized Airflow 2.11 and 3.3. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [AGENTS.md](AGENTS.md) if you're pointing a coding agent at this repo (it's written for that).
 
 ## Contributing
 
 Issues and PRs are welcome — especially:
 
-- Reports from real Airflow 3 deployments (the v2 support is new)
-- Additional tools (XComs, variables, pools, backfills)
-- Client setup recipes for more MCP hosts
+- Reports from real Airflow incident-response workflows and version combinations
+- Bounded-log, diagnosis-safety, and URL-first workflow improvements
+- Client setup recipes for more MCP hosts and deployment types
 
 If this server saves you a debugging session, a ⭐ helps other Airflow teams find it.
 

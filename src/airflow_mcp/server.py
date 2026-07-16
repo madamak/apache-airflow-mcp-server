@@ -452,7 +452,7 @@ def airflow_clear_task_instances(
     include_downstream: bool | None = None,
     include_future: bool | None = None,
     include_past: bool | None = None,
-    dry_run: bool | None = None,
+    dry_run: bool | None = True,
     reset_dag_runs: bool | None = None,
 ) -> dict[str, Any]:
     """Clear task instances for a DAG across one or more runs using Airflow's native filter set (destructive).
@@ -470,7 +470,7 @@ def airflow_clear_task_instances(
     - include_downstream: Include downstream tasks (optional)
     - include_future: Include future runs (optional)
     - include_past: Include past runs (optional)
-    - dry_run: If true, perform a dry-run only (optional)
+    - dry_run: Preview without mutating (default true); set false explicitly to clear
     - reset_dag_runs: Reset DagRun state (optional)
 
     Returns
@@ -506,7 +506,7 @@ def airflow_clear_dag_run(
     include_parentdag: bool | None = None,
     include_upstream: bool | None = None,
     include_downstream: bool | None = None,
-    dry_run: bool | None = None,
+    dry_run: bool | None = True,
     reset_dag_runs: bool | None = None,
 ) -> dict[str, Any]:
     """Clear all task instances in a specific DAG run (destructive).
@@ -520,7 +520,7 @@ def airflow_clear_dag_run(
     - include_parentdag: Include parent DAG (optional)
     - include_upstream: Include upstream tasks (optional)
     - include_downstream: Include downstream tasks (optional)
-    - dry_run: If true, perform a dry-run only (optional)
+    - dry_run: Preview without mutating (default true); set false explicitly to clear
     - reset_dag_runs: Reset DagRun state (optional)
 
     Returns

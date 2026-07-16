@@ -20,6 +20,9 @@ from ._common import ApiException, _coerce_int, _raise_api_error
 
 _factory = get_client_factory()
 
+_ALLOWED_FILTER_LEVELS = {"error", "warning", "info"}
+_MAX_LOG_BYTES = 1_000_000
+
 
 def _filter_logs(
     raw_log: str,
@@ -88,7 +91,7 @@ def _filter_logs(
     stats = {
         "bytes_returned": len(result.encode()),
         "original_lines": original_count,
-        "returned_lines": len(lines),
+        "returned_lines": len(result.splitlines()),
         "match_count": match_count,
     }
     return result, truncated, stats
@@ -317,6 +320,32 @@ def get_task_instance_logs(
                     ]
                 },
             )
+
+        filter_level_value: str | None = None
+        if filter_level is not None:
+            if not isinstance(filter_level, str):
+                raise AirflowToolError(
+                    "filter_level must be one of 'error', 'warning', or 'info'",
+                    code="INVALID_INPUT",
+                    context={"field": "filter_level", "value": filter_level},
+                )
+            filter_level_value = filter_level.strip().lower()
+            if filter_level_value not in _ALLOWED_FILTER_LEVELS:
+                raise AirflowToolError(
+                    "filter_level must be one of 'error', 'warning', or 'info'",
+                    code="INVALID_INPUT",
+                    context={"field": "filter_level", "value": filter_level},
+                )
+
+        max_bytes_int = _coerce_int(max_bytes)
+        if max_bytes_int is None or max_bytes_int <= 0:
+            raise AirflowToolError(
+                "max_bytes must be a positive integer",
+                code="INVALID_INPUT",
+                context={"field": "max_bytes", "value": max_bytes},
+            )
+        max_bytes_clamped = min(max_bytes_int, _MAX_LOG_BYTES)
+
         op.update_context(
             instance=resolved.instance,
             dag_id=dag_id_value,
@@ -419,10 +448,10 @@ def get_task_instance_logs(
 
         filtered_log, truncated, stats = _filter_logs(
             log_text,
-            filter_level,
+            filter_level_value,
             context_lines_clamped,
             tail_lines_clamped,
-            max_bytes,
+            max_bytes_clamped,
         )
 
         payload = {
@@ -433,10 +462,10 @@ def get_task_instance_logs(
             "meta": {
                 "try_number": try_number_value,
                 "filters": {
-                    "filter_level": filter_level,
+                    "filter_level": filter_level_value,
                     "context_lines": context_lines_clamped,
                     "tail_lines": tail_lines_clamped,
-                    "max_bytes": max_bytes,
+                    "max_bytes": max_bytes_clamped,
                 },
             },
             "ui_url": ui,

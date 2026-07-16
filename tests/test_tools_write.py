@@ -37,7 +37,7 @@ def test_trigger_dag_with_conf_and_logical_date():
     )
     payload = _payload(out)
     assert payload["dag_run_id"] == "manual__001"
-    assert payload["ui_url"].endswith("/dags/dag_a/dagRuns/manual__001")
+    assert payload["ui_url"].endswith("/dags/dag_a/grid?dag_run_id=manual__001")
     client = _get_cached_api_client("data-stg")
     dag_run_model = client.last_post_dag_run
     assert getattr(dag_run_model, "dag_run_id", None) == "manual__001"
@@ -55,9 +55,7 @@ def test_trigger_dag_invalid_conf_raises():
 
 def test_trigger_dag_invalid_logical_date():
     with pytest.raises(AirflowToolError) as exc:
-        airflow_tools.trigger_dag(
-            instance="data-stg", dag_id="dag_a", logical_date="2025-13-01"
-        )
+        airflow_tools.trigger_dag(instance="data-stg", dag_id="dag_a", logical_date="2025-13-01")
     assert exc.value.code == "INVALID_INPUT"
 
 

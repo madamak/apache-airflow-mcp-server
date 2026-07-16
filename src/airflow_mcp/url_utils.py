@@ -115,6 +115,16 @@ def parse_airflow_ui_url(url: str) -> ResolvedUrl:
             route = segments[2]
             r = q("dag_run_id")
             dag_run_id = validate_dag_run_id(r)
+            r_task = q("task_id")
+            task_id = validate_task_id(r_task)
+            if task_id is not None:
+                route = "log" if q("tab") == "logs" else "task"
+                r_try = q("try_number")
+                if r_try is not None:
+                    try:
+                        try_number = int(r_try)
+                    except ValueError:
+                        try_number = None
         elif len(segments) >= 3 and segments[2] == "dagRuns":
             if len(segments) >= 4:
                 dag_run_id = validate_dag_run_id(unquote(segments[3]))
@@ -211,19 +221,25 @@ def build_airflow_ui_url(
             url = f"{base}/dags/{encoded_dag_id}/{route}{('?' + qs) if qs else ''}"
         elif route == "dag_run" and dag_run_id:
             dag_run_id = validate_dag_run_id(dag_run_id)
-            url = f"{base}/dags/{encoded_dag_id}/dagRuns/{_encode_segment(dag_run_id)}"
-        elif route == "task" and task_id:
+            qs = _encode_query({"dag_run_id": dag_run_id})
+            url = f"{base}/dags/{encoded_dag_id}/grid?{qs}"
+        elif route == "task" and dag_run_id and task_id:
             dag_run_id = validate_dag_run_id(dag_run_id)
             task_id = validate_task_id(task_id)
-            qs = _encode_query({"task_id": task_id, "dag_run_id": dag_run_id})
-            url = f"{base}/dags/{encoded_dag_id}/task{('?' + qs) if qs else ''}"
+            qs = _encode_query({"dag_run_id": dag_run_id, "task_id": task_id, "tab": "details"})
+            url = f"{base}/dags/{encoded_dag_id}/grid?{qs}"
         elif route == "log" and dag_run_id and task_id and try_number is not None:
             dag_run_id = validate_dag_run_id(dag_run_id)
             task_id = validate_task_id(task_id)
-            url = (
-                f"{base}/dags/{encoded_dag_id}/dagRuns/{_encode_segment(dag_run_id)}"
-                f"/taskInstances/{_encode_segment(task_id)}/logs/{try_number}"
+            qs = _encode_query(
+                {
+                    "dag_run_id": dag_run_id,
+                    "task_id": task_id,
+                    "tab": "logs",
+                    "try_number": str(try_number),
+                }
             )
+            url = f"{base}/dags/{encoded_dag_id}/grid?{qs}"
 
     if url is not None:
         return url

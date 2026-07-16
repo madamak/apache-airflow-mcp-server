@@ -42,6 +42,21 @@ def test_resolve_grid_url_with_plus_in_dag_run(monkeypatch: pytest.MonkeyPatch):
     assert payload["dag_run_id"] == dag_run_id
 
 
+def test_resolve_canonical_grid_task_and_log_urls(monkeypatch: pytest.MonkeyPatch):
+    host = "https://airflow.data-stg.example.com"
+    task_url = f"{host}/dags/my_dag/grid?dag_run_id=dr1&task_id=t1&tab=details"
+    task_payload = _payload(airflow_tools.resolve_url(task_url))
+    assert task_payload["route"] == "task"
+    assert task_payload["dag_run_id"] == "dr1"
+    assert task_payload["task_id"] == "t1"
+
+    log_url = f"{host}/dags/my_dag/grid?dag_run_id=dr1&task_id=t1&tab=logs&try_number=2"
+    log_payload = _payload(airflow_tools.resolve_url(log_url))
+    assert log_payload["route"] == "log"
+    assert log_payload["task_id"] == "t1"
+    assert log_payload["try_number"] == 2
+
+
 def test_resolve_dag_run_url(monkeypatch: pytest.MonkeyPatch):
     host = "https://airflow.data-stg.example.com"
     url = f"{host}/dags/my_dag/dagRuns/scheduled__2025-01-15"

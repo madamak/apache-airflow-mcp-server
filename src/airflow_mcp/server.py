@@ -345,7 +345,7 @@ def airflow_get_task_instance_logs(
         * "info": INFO + warning + error patterns
     - context_lines: N lines before/after each match (optional, clamped to [0, 1000]; accepts int/float/str, coerced to non-negative int, fractional values truncated)
     - tail_lines: Extract last N lines before filtering (optional, clamped to [0, 100000]; accepts int/float/str, coerced to non-negative int, fractional values truncated)
-    - max_bytes: Maximum response size in bytes (default: 100KB ≈ 25K tokens, clamped to reasonable limit)
+    - max_bytes: Maximum response size in bytes (default: 100KB ≈ 25K tokens, clamped to 1MB)
 
     Returns
     - Response dict with fields:

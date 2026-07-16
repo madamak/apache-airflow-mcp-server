@@ -266,9 +266,9 @@ def test_list_dag_runs_with_ui_url():
     payload = _payload(out)
     assert payload["count"] == 2
     assert payload["dag_runs"][0]["dag_run_id"] == "dr1"
-    assert payload["dag_runs"][0]["ui_url"].endswith("/dags/dag_a/dagRuns/dr1")
+    assert payload["dag_runs"][0]["ui_url"].endswith("/dags/dag_a/grid?dag_run_id=dr1")
     assert payload["dag_runs"][1]["dag_run_id"] == "dr2"
-    assert payload["dag_runs"][1]["ui_url"].endswith("/dags/dag_a/dagRuns/dr2")
+    assert payload["dag_runs"][1]["ui_url"].endswith("/dags/dag_a/grid?dag_run_id=dr2")
 
 
 def test_list_dag_runs_defaults_to_latest_first(monkeypatch: pytest.MonkeyPatch):
@@ -329,9 +329,7 @@ def test_list_dag_runs_order_by_start_date_desc(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(apis.DAGRunApi, "get_dag_runs", _fake_get_dag_runs)
 
-    out = airflow_tools.list_dag_runs(
-        instance="data-stg", dag_id="dag_a", order_by="start_date"
-    )
+    out = airflow_tools.list_dag_runs(instance="data-stg", dag_id="dag_a", order_by="start_date")
     payload = _payload(out)
     assert captured["order_by"] == "-start_date"
     assert payload["dag_runs"][0]["dag_run_id"] == "recent"
@@ -389,9 +387,7 @@ def test_list_dag_runs_order_by_end_date_desc(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(apis.DAGRunApi, "get_dag_runs", _fake_get_dag_runs)
 
-    out = airflow_tools.list_dag_runs(
-        instance="data-stg", dag_id="dag_a", order_by="end_date"
-    )
+    out = airflow_tools.list_dag_runs(instance="data-stg", dag_id="dag_a", order_by="end_date")
     payload = _payload(out)
     assert captured["order_by"] == "-end_date"
     assert payload["dag_runs"][0]["dag_run_id"] == "completed_last"
@@ -465,9 +461,7 @@ def test_list_dag_runs_invalid_descending_value():
 
 
 def test_get_dag_run():
-    out = airflow_tools.get_dag_run(
-        instance="data-stg", dag_id="dag_a", dag_run_id="dr1"
-    )
+    out = airflow_tools.get_dag_run(instance="data-stg", dag_id="dag_a", dag_run_id="dr1")
     payload = _payload(out)
     assert payload["dag_run"]["dag_run_id"] == "dr1"
 
@@ -487,7 +481,9 @@ def test_get_task_instance_basic():
     config = payload["task_config"]
     assert config["owner"] == "data-eng"
     assert payload["ui_url"]["grid"].endswith("/dags/dag_a/grid?dag_run_id=dr1")
-    assert payload["ui_url"]["log"].endswith("/dags/dag_a/dagRuns/dr1/taskInstances/t1/logs/1")
+    assert payload["ui_url"]["log"].endswith(
+        "/dags/dag_a/grid?dag_run_id=dr1&task_id=t1&tab=logs&try_number=1"
+    )
     assert "rendered_fields" not in payload
 
 
@@ -552,9 +548,7 @@ def test_get_task_instance_task_config_unavailable(monkeypatch: pytest.MonkeyPat
 
 def test_get_task_instance_requires_identifiers():
     with pytest.raises(AirflowToolError) as exc:
-        airflow_tools.get_task_instance(
-            instance="data-stg", dag_id="dag_a", dag_run_id="dr1"
-        )
+        airflow_tools.get_task_instance(instance="data-stg", dag_id="dag_a", dag_run_id="dr1")
     assert exc.value.code == "INVALID_INPUT"
 
 
@@ -657,6 +651,66 @@ def test_task_logs_truncation_with_max_bytes(monkeypatch: pytest.MonkeyPatch):
     assert payload["truncated"] is True
     assert payload["bytes_returned"] <= 1024
     assert "ERROR" in payload["log"]
+
+
+@pytest.mark.parametrize("filter_level", ["debug", "", 123])
+def test_task_logs_rejects_unknown_filter_level(filter_level):
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.get_task_instance_logs(
+            instance="data-stg",
+            dag_id="dag_a",
+            dag_run_id="dr1",
+            task_id="t1",
+            try_number=1,
+            filter_level=filter_level,
+        )
+    assert exc.value.code == "INVALID_INPUT"
+    assert exc.value.context["field"] == "filter_level"
+
+
+@pytest.mark.parametrize("max_bytes", [0, -1, "not-a-number"])
+def test_task_logs_rejects_nonpositive_or_invalid_max_bytes(max_bytes):
+    with pytest.raises(AirflowToolError) as exc:
+        airflow_tools.get_task_instance_logs(
+            instance="data-stg",
+            dag_id="dag_a",
+            dag_run_id="dr1",
+            task_id="t1",
+            try_number=1,
+            max_bytes=max_bytes,
+        )
+    assert exc.value.code == "INVALID_INPUT"
+    assert exc.value.context["field"] == "max_bytes"
+
+
+def test_task_logs_normalizes_filter_level_and_clamps_max_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from airflow_mcp import client_factory as cf
+
+    *_, apis = cf._import_airflow_client()  # type: ignore[attr-defined]
+
+    def _fake_get_log(self, dag_id: str, dag_run_id: str, task_id: str, try_number: int):
+        return "ERROR x\n" * 150_000
+
+    monkeypatch.setattr(apis.TaskInstanceApi, "get_log", _fake_get_log)
+
+    payload = _payload(
+        airflow_tools.get_task_instance_logs(
+            instance="data-stg",
+            dag_id="dag_a",
+            dag_run_id="dr1",
+            task_id="t1",
+            try_number=1,
+            filter_level=" ERROR ",
+            max_bytes=10_000_000,
+        )
+    )
+    assert payload["meta"]["filters"]["filter_level"] == "error"
+    assert payload["meta"]["filters"]["max_bytes"] == 1_000_000
+    assert payload["bytes_returned"] == 1_000_000
+    assert payload["returned_lines"] == len(payload["log"].splitlines())
+    assert payload["truncated"] is True
 
 
 def test_task_logs_tail_zero(monkeypatch: pytest.MonkeyPatch):
@@ -1020,9 +1074,7 @@ def test_coerce_datetime_edge_cases():
 
 
 def test_dataset_events():
-    out = airflow_tools.dataset_events(
-        instance="data-stg", dataset_uri="dataset://abc", limit=2
-    )
+    out = airflow_tools.dataset_events(instance="data-stg", dataset_uri="dataset://abc", limit=2)
     payload = _payload(out)
     assert payload["count"] == 2
     assert payload["events"][0]["uri"] == "dataset://abc"
@@ -1093,9 +1145,7 @@ def test_task_logs_invalid_task_id():
 
 def test_dataset_events_invalid_uri():
     with pytest.raises(AirflowToolError) as exc:
-        airflow_tools.dataset_events(
-            instance="data-stg", dataset_uri="dataset://bad uri"
-        )
+        airflow_tools.dataset_events(instance="data-stg", dataset_uri="dataset://bad uri")
     assert exc.value.code == "INVALID_INPUT"
 
 
@@ -1168,7 +1218,7 @@ def test_list_task_instances_filters_state(monkeypatch: pytest.MonkeyPatch):
     assert payload["filters"]["task_ids"] is None
     assert payload["task_instances"][0]["task_id"] == "a"
     assert payload["task_instances"][0]["ui_url"].endswith(
-        "/dags/dag_a/dagRuns/dr1/taskInstances/a/logs/1"
+        "/dags/dag_a/grid?dag_run_id=dr1&task_id=a&tab=logs&try_number=1"
     )
 
 

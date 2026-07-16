@@ -62,6 +62,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
+- **Airflow 2 run/task/log UI links returned 404**: generated links used REST-like
+  `/dagRuns/.../taskInstances/...` paths that are not Airflow 2 web UI routes.
+  They now use the live-validated grid route with encoded run/task/tab/attempt
+  query parameters; the resolver also understands those canonical links while
+  retaining compatibility with previously emitted URLs.
+- Log filtering now rejects unknown `filter_level` values and non-positive or
+  invalid `max_bytes` with `INVALID_INPUT`. The byte cap is enforced at a 1 MB
+  maximum, normalized filter values and the effective cap are reported in
+  response metadata, and `returned_lines` reflects post-truncation output.
 - **Airflow 2 task logs were treated as a single line** (found by the new E2E
   suite): the v1 client returns log content as a `"[('host', 'text')]"` repr
   string with escaped newlines, but the parser only unwrapped it when the

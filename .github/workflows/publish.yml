@@ -312,9 +312,17 @@ jobs:
         with:
           name: release-security-reports
           path: security-reports/
-      - name: Create GitHub Release
+      - name: Create draft GitHub Release with all assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* security-reports/* --verify-tag --generate-notes
+        run: >-
+          gh release create "$TAG" dist/* security-reports/*
+          --draft --verify-tag --generate-notes
+      - name: Publish immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false

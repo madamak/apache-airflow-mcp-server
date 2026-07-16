@@ -17,6 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   findings.
 - Release images now publish an SBOM and build provenance; Python distribution
   artifacts and OCI image digests receive GitHub build attestations.
+- GitHub Releases are assembled with all artifacts and security reports as
+  drafts before publication so release immutability can lock the complete set.
 - Quickstarts now enable read-only mode explicitly, and Docker documentation
   emphasizes loopback-only port publishing for the unauthenticated HTTP
   transport.

@@ -19,7 +19,7 @@ resolution-markers = [
     "python_full_version < '3.11' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "caio", marker = "python_full_version < '3.11'" },
+    { name = "caio" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/67/e2/d7cb819de8df6b5c1968a2756c3cb4122d4fa2b8fc768b53b7c9e5edb646/aiofile-3.9.0.tar.gz", hash = "sha256:e5ad718bb148b265b6df1b3752c4d1d83024b93da9bd599df74b9d9ffcf7919b", size = 17943, upload-time = "2024-10-08T10:39:35.846Z" }
 wheels = [
@@ -37,7 +37,7 @@ resolution-markers = [
     "python_full_version >= '3.11' and python_full_version < '3.14' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "caio", marker = "python_full_version >= '3.11'" },
+    { name = "caio" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/48/41/2fea7e193e061ce54eacc3b7bc0e6a99e4fcff43c78cf0a76dd781ed8334/aiofile-3.11.1.tar.gz", hash = "sha256:1f91912c6643d2a4e49ca4ae3514f0bf3867ce948a36d99a6411b8f4755f4cf9", size = 19342, upload-time = "2026-05-16T08:18:33.538Z" }
 wheels = [
@@ -69,16 +69,16 @@ wheels = [
 
 [[package]]
 name = "apache-airflow-client"
-version = "3.3.0"
+version = "3.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/ac/2de27675cd4420da9c71b7f21386d84a1ffee756eae4b51e35c45ac5eb14/apache_airflow_client-3.3.0.tar.gz", hash = "sha256:b89761a62f5629d0554ad4a49f6b8bca9b6e452bcb6698fb720362e2d19097ed", size = 286595, upload-time = "2026-07-14T13:53:39.164Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/06/666e0f5b95cab77545e0305fb10d09d3c945a250ab179a44dfec2c36b2c4/apache_airflow_client-3.3.1.tar.gz", hash = "sha256:6c73687e3d5f427d7ed72d6b8fa13b6d589c5b34f3372ba80ec2b32502b52b1e", size = 283795, upload-time = "2026-08-17T10:43:55.903Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/91/e85dc7496812e788ac312c544b3a765987a51d198b8efa2dc67964154bad/apache_airflow_client-3.3.0-py3-none-any.whl", hash = "sha256:4f94bed718e1cb8daf463d8a46fa8be0e169faffa5fb02d84f98805bbdf1b888", size = 474475, upload-time = "2026-07-14T13:53:37.341Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/d9/87982d519e2ceae26a025ebebbe17d66c7f304af416a6bbc370616a9894e/apache_airflow_client-3.3.1-py3-none-any.whl", hash = "sha256:c9f6f77fe0f5836be09cbe5f30fa42384bbd5fc4b0f343b6273bb37bf19555db", size = 567363, upload-time = "2026-08-17T10:43:53.426Z" },
 ]
 
 [[package]]
@@ -719,7 +719,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp", marker = "python_full_version < '3.14'" },
+    { name = "zipp" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
@@ -1697,8 +1697,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
